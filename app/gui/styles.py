@@ -413,10 +413,13 @@ QRadioButton {{
     font-weight: 600;
 }}
 
+/* width/height are the content box, so the border is added on top of them.
+   Both states must sum to the same 22px or the indicator changes size when it
+   is selected and squeezes the label next to it. */
 QRadioButton::indicator {{
     width: 18px;
     height: 18px;
-    border-radius: 10px;
+    border-radius: 11px;
     border: 2px solid {p.border_strong};
     background-color: {p.field};
 }}
@@ -426,6 +429,8 @@ QRadioButton::indicator:hover {{
 }}
 
 QRadioButton::indicator:checked {{
+    width: 10px;
+    height: 10px;
     border: 6px solid {p.accent};
     background-color: {p.field};
 }}
