@@ -1,0 +1,4 @@
+# IP_CHANGER runtime dependencies
+PySide6>=6.6,<7.0
+
+# Development / build (install with: pip install -r requirements-dev.txt)

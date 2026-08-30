@@ -1,0 +1,1919 @@
+# IP_CHANGER — FULL DEVELOPMENT SPECIFICATION
+
+## 1. PROJECT OVERVIEW
+
+Develop a professional Windows desktop application called **IP_CHANGER**.
+
+The application must provide a very simple and reliable GUI for configuring network adapters.
+
+The main purpose is to allow an operator/technician to:
+
+* View all available network adapters.
+* Select a network adapter.
+* View its current IP configuration.
+* Change:
+
+  * IPv4 address
+  * Subnet mask
+  * Default gateway
+* Switch between DHCP and Static IP.
+* Save named IP configurations/presets.
+* View previously saved configurations.
+* Apply a saved configuration with one click.
+* Validate configurations before applying them.
+* Clearly show the current active configuration.
+* Recover gracefully from errors.
+* Always request/elevate Administrator privileges when required.
+
+The application must be designed primarily for **industrial/commissioning environments**, where reliability and simplicity are more important than having many unnecessary features.
+
+The operator should be able to configure an adapter in a few seconds without needing to understand Windows networking commands.
+
+---
+
+# 2. TARGET PLATFORM
+
+Primary target:
+
+**Windows 10 and Windows 11 — 64 bit**
+
+The application must work on standard Windows installations without requiring the user to manually install Python or additional dependencies.
+
+The final application should preferably be distributable as:
+
+`IP_CHANGER.exe`
+
+or as a small installer producing:
+
+`IP_CHANGER.exe`
+
+The application must run with Administrator privileges when required.
+
+---
+
+# 3. CORE DESIGN PRINCIPLE
+
+DO NOT implement this as a simple GUI that blindly executes shell commands.
+
+The application must have a robust architecture with:
+
+### GUI layer
+
+Responsible for:
+
+* User interaction
+* Display
+* Validation feedback
+* Preset management
+* Status
+* Confirmation dialogs
+
+### Network management layer
+
+Responsible for:
+
+* Enumerating adapters
+* Reading adapter configuration
+* Validating configuration
+* Applying configuration
+* Verifying the result
+
+### Privileged execution layer
+
+All operations requiring Administrator privileges must be executed through a controlled privileged mechanism.
+
+Do not give unnecessary privileges to unrelated components.
+
+The application must detect whether it is running elevated.
+
+If not elevated, restart itself with Administrator privileges using the standard Windows UAC mechanism.
+
+---
+
+# 4. TECHNOLOGY
+
+Preferred implementation:
+
+* Python 3.12+
+* PySide6 for GUI
+* Windows native networking APIs where practical
+* PowerShell / netsh / WMI / CIM only where appropriate
+* SQLite for persistent configuration storage
+
+Do not rely on fragile parsing of localized command-line output.
+
+Windows APIs should be preferred for retrieving network information.
+
+For configuration changes, use the most reliable Windows-supported mechanism available.
+
+The architecture must isolate Windows-specific networking code from the GUI.
+
+Suggested structure:
+
+```text
+IP_CHANGER/
+│
+├── app/
+│   ├── main.py
+│   ├── gui/
+│   │   ├── main_window.py
+│   │   ├── adapter_panel.py
+│   │   ├── preset_panel.py
+│   │   ├── dialogs.py
+│   │   └── styles.py
+│   │
+│   ├── network/
+│   │   ├── adapter_manager.py
+│   │   ├── ip_manager.py
+│   │   ├── validator.py
+│   │   └── verifier.py
+│   │
+│   ├── storage/
+│   │   ├── database.py
+│   │   └── presets.py
+│   │
+│   ├── security/
+│   │   └── elevation.py
+│   │
+│   ├── models/
+│   │   ├── adapter.py
+│   │   └── configuration.py
+│   │
+│   └── utils/
+│       ├── logging.py
+│       └── helpers.py
+│
+├── tests/
+├── assets/
+├── requirements.txt
+├── README.md
+└── build/
+```
+
+The exact architecture can be modified if Claude identifies a better implementation, but the separation of concerns must remain.
+
+---
+
+# 5. MAIN GUI
+
+The interface must be modern, clean and extremely simple.
+
+Avoid a classic Windows utility appearance.
+
+The GUI should feel like a modern professional engineering tool.
+
+Preferred design:
+
+* Dark/light theme support if practical.
+* Modern cards.
+* Clear typography.
+* Large controls.
+* Minimal visual clutter.
+* No unnecessary technical information on the main screen.
+* Use icons where useful.
+* Use color only to communicate status.
+
+The main window should contain approximately:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  IP CHANGER                              ● Administrator     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  NETWORK ADAPTER                                            │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ Ethernet 1                                    ▼       │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│  STATUS                                                     │
+│  ● Connected                                                │
+│                                                             │
+│  CURRENT CONFIGURATION                                      │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ IP Address      192.168.1.100                         │  │
+│  │ Subnet Mask     255.255.255.0                         │  │
+│  │ Gateway         192.168.1.1                           │  │
+│  │ DHCP            Disabled                              │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│  NEW CONFIGURATION                                          │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ ○ DHCP                                                │  │
+│  │ ● Static                                              │  │
+│  │                                                       │  │
+│  │ IP Address      [192.168.1.100]                       │  │
+│  │ Subnet Mask     [255.255.255.0]                       │  │
+│  │ Gateway         [192.168.1.1]                         │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│       [ Save as Preset ]        [ APPLY CONFIGURATION ]     │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The exact design can be improved by Claude.
+
+---
+
+# 6. NETWORK ADAPTER DISCOVERY
+
+At startup, enumerate all network adapters.
+
+Display:
+
+* Adapter name
+* Friendly name
+* Description
+* Status
+* MAC address
+* Connection type when available
+* Current IPv4 address
+* DHCP enabled/disabled
+
+Examples:
+
+```text
+Ethernet
+Wi-Fi
+Ethernet 2
+USB Ethernet
+```
+
+The application must NOT assume that an adapter is called "Ethernet".
+
+Names must be dynamically discovered.
+
+---
+
+# 7. ADAPTER SELECTION
+
+The user must be able to select any available network adapter.
+
+The adapter selector should clearly distinguish:
+
+### Active adapters
+
+```text
+● Ethernet
+● Wi-Fi
+```
+
+### Inactive adapters
+
+```text
+○ Ethernet 2
+○ USB Ethernet
+```
+
+If useful, show:
+
+```text
+Ethernet
+Connected
+192.168.1.100
+```
+
+rather than only:
+
+```text
+Ethernet
+```
+
+---
+
+# 8. CURRENT CONFIGURATION
+
+When an adapter is selected, immediately retrieve its current configuration.
+
+Show:
+
+### IPv4
+
+* IP address
+* Subnet mask / prefix
+* Gateway
+
+### DHCP
+
+* Enabled / Disabled
+
+### DNS
+
+The initial version does not need to modify DNS, but the architecture should make it possible to add DNS configuration later.
+
+If the adapter has multiple IPv4 addresses, display all of them or clearly indicate multiple addresses.
+
+Do not incorrectly assume that there is only one IPv4 address.
+
+---
+
+# 9. DHCP MODE
+
+Provide a clear toggle:
+
+```text
+DHCP
+○
+```
+
+When DHCP is selected:
+
+* IP fields become disabled.
+* Subnet field becomes disabled.
+* Gateway field becomes disabled.
+* Applying configuration switches the adapter to DHCP.
+
+After applying DHCP:
+
+1. Wait for Windows to configure the adapter.
+2. Refresh the adapter.
+3. Read the resulting configuration.
+4. Display the obtained IP address.
+5. Verify the adapter state.
+
+Do not simply assume that the DHCP operation succeeded.
+
+---
+
+# 10. STATIC IP MODE
+
+When Static is selected:
+
+```text
+IP Address
+[192.168.1.100]
+
+Subnet Mask
+[255.255.255.0]
+
+Gateway
+[192.168.1.1]
+```
+
+All fields must be validated before applying.
+
+---
+
+# 11. INPUT VALIDATION
+
+Validation must happen BEFORE any system modification.
+
+Validate:
+
+### IPv4
+
+Must be a valid IPv4 address.
+
+Examples:
+
+Valid:
+
+```text
+192.168.1.100
+10.0.0.10
+172.16.10.50
+```
+
+Invalid:
+
+```text
+192.168.1.999
+192.168.1
+hello
+```
+
+### Subnet mask
+
+Validate both:
+
+* Traditional subnet masks:
+  `255.255.255.0`
+
+* If the implementation uses CIDR internally:
+  `/24`
+
+The GUI should preferably display traditional subnet notation.
+
+### Gateway
+
+Must be a valid IPv4 address.
+
+Validate logical consistency.
+
+Example:
+
+```text
+IP:
+192.168.1.100
+
+Mask:
+255.255.255.0
+
+Gateway:
+192.168.2.1
+```
+
+should trigger:
+
+```text
+Gateway appears to be outside the configured subnet.
+Continue anyway?
+```
+
+Do not automatically block unusual configurations unless they are objectively invalid.
+
+---
+
+# 12. SPECIAL CASES
+
+The application must correctly handle:
+
+* 169.254.x.x APIPA addresses
+* No IP address
+* Multiple IPv4 addresses
+* Disabled adapter
+* Disconnected Ethernet
+* Wi-Fi adapter
+* Virtual adapters
+* VPN adapters
+* Hyper-V adapters
+* VMware adapters
+* Docker adapters
+* Loopback adapters
+
+Do not blindly treat every adapter as a physical Ethernet interface.
+
+Provide a way to identify adapter type.
+
+For example:
+
+```text
+Ethernet
+Physical
+```
+
+versus:
+
+```text
+vEthernet (Default Switch)
+Virtual
+```
+
+The user should still be able to configure supported adapters, but the application must make their nature clear.
+
+---
+
+# 13. APPLY CONFIGURATION
+
+This is the most critical functionality.
+
+When the user clicks:
+
+```text
+APPLY CONFIGURATION
+```
+
+the application must NOT immediately modify the adapter.
+
+First perform:
+
+### Step 1 — Validate
+
+Check:
+
+* IP
+* subnet
+* gateway
+* consistency
+* duplicate/obvious conflicts where detectable
+
+### Step 2 — Show confirmation
+
+Example:
+
+```text
+Apply network configuration?
+
+Adapter:
+Ethernet
+
+Current:
+192.168.1.100 / 255.255.255.0
+Gateway: 192.168.1.1
+
+New:
+192.168.10.50 / 255.255.255.0
+Gateway: 192.168.10.1
+
+The network connection may be temporarily interrupted.
+
+[ CANCEL ]    [ APPLY ]
+```
+
+### Step 3 — Create a rollback snapshot
+
+Before modifying anything, save the current configuration in memory.
+
+### Step 4 — Apply
+
+Perform the configuration change.
+
+### Step 5 — Wait
+
+Allow Windows time to update the network stack.
+
+### Step 6 — Refresh
+
+Re-read the adapter.
+
+### Step 7 — Verify
+
+Compare actual configuration against requested configuration.
+
+### Step 8 — Report result
+
+Success:
+
+```text
+✓ Configuration applied successfully
+
+Ethernet
+192.168.10.50
+255.255.255.0
+192.168.10.1
+```
+
+Failure:
+
+```text
+✕ Configuration could not be verified.
+
+The previous configuration can be restored.
+
+[ RESTORE PREVIOUS CONFIGURATION ]
+```
+
+---
+
+# 14. ROLLBACK
+
+Rollback is mandatory.
+
+If configuration fails or verification fails, the application must be able to restore the previous configuration.
+
+Before every modification capture:
+
+* DHCP state
+* IPv4 address(es)
+* subnet
+* gateway
+* interface index/name
+* relevant configuration required to restore the state
+
+If multiple IPv4 addresses are configured, rollback must restore the complete previous state, not only the first address.
+
+The rollback operation must be independently executable.
+
+Provide:
+
+```text
+RESTORE PREVIOUS CONFIGURATION
+```
+
+after a failed operation.
+
+---
+
+# 15. CONNECTION LOSS WARNING
+
+Changing the IP address can disconnect the machine from the network.
+
+The application must clearly warn the user.
+
+Example:
+
+```text
+⚠ Network connection may be interrupted.
+
+Changing the IP address can disconnect remote sessions,
+PLC connections, SCADA systems and other network services.
+
+Make sure you have physical/local access to the computer
+before applying this configuration.
+
+[ CANCEL ] [ CONTINUE ]
+```
+
+This is particularly important for industrial commissioning environments.
+
+---
+
+# 16. PRESETS / SAVED CONFIGURATIONS
+
+The application must allow users to save configurations.
+
+Example:
+
+```text
+SAVE CONFIGURATION
+
+Name:
+[ PLC NETWORK ]
+
+Adapter:
+Ethernet
+
+IP:
+192.168.10.100
+
+Subnet:
+255.255.255.0
+
+Gateway:
+192.168.10.1
+
+[ SAVE ]
+```
+
+Saved configurations must be persistent.
+
+Use SQLite.
+
+---
+
+# 17. PRESET DATABASE
+
+Suggested database:
+
+```text
+ip_changer.db
+```
+
+Table:
+
+```text
+presets
+```
+
+Suggested fields:
+
+```text
+id
+name
+adapter_identifier
+adapter_name
+mode
+ip_address
+subnet_mask
+gateway
+created_at
+updated_at
+description
+```
+
+Do NOT identify adapters only by their friendly name.
+
+Prefer a stable identifier such as:
+
+* Interface GUID
+* MAC address
+* Interface index where appropriate
+
+The application should intelligently handle situations where an adapter name changes.
+
+---
+
+# 18. PRESET UI
+
+Add a dedicated preset section.
+
+Example:
+
+```text
+SAVED CONFIGURATIONS
+
+┌─────────────────────────────────────────────┐
+│ PLC Network                                 │
+│ Ethernet                                    │
+│ 192.168.10.100 / 255.255.255.0             │
+│                                             │
+│                         [ APPLY ] [ ⋮ ]     │
+├─────────────────────────────────────────────┤
+│ SCADA Network                               │
+│ Ethernet                                    │
+│ 10.10.20.100 / 255.255.255.0               │
+│                                             │
+│                         [ APPLY ] [ ⋮ ]     │
+└─────────────────────────────────────────────┘
+```
+
+The user should be able to:
+
+* Apply
+* Edit
+* Rename
+* Duplicate
+* Delete
+
+A delete operation must require confirmation.
+
+---
+
+# 19. APPLY PRESET
+
+When applying a preset:
+
+1. Verify that the target adapter exists.
+2. If possible, match using stable adapter identity.
+3. Show the configuration.
+4. Validate it.
+5. Ask confirmation.
+6. Save current configuration.
+7. Apply preset.
+8. Verify.
+9. Report success/failure.
+
+If the adapter no longer exists:
+
+```text
+Adapter not found.
+
+This configuration was saved for:
+Ethernet
+MAC: XX:XX:XX:XX:XX:XX
+
+Please select another adapter or edit the preset.
+```
+
+Never silently apply a preset to a different adapter.
+
+---
+
+# 20. DUPLICATE IP WARNING
+
+Where technically feasible, implement a duplicate-IP check.
+
+After applying a static IP, optionally perform a basic network conflict detection.
+
+However:
+
+DO NOT rely on ping alone as proof that an IP is free.
+
+A device may block ICMP.
+
+Therefore the application should report:
+
+```text
+IP conflict check:
+No conflict detected
+```
+
+or:
+
+```text
+IP conflict check:
+Unable to determine
+```
+
+rather than falsely claiming the address is definitely free.
+
+---
+
+# 21. ADMINISTRATOR PRIVILEGES
+
+The application must correctly handle Windows UAC.
+
+At startup:
+
+1. Detect whether running elevated.
+2. If not elevated:
+
+   * restart itself with Administrator privileges.
+3. Preserve application arguments/state when restarting.
+
+The GUI should display:
+
+```text
+● Administrator
+```
+
+or:
+
+```text
+⚠ Administrator privileges required
+```
+
+depending on state.
+
+Never ask the user to manually open CMD as Administrator.
+
+The application itself must handle elevation.
+
+---
+
+# 22. ERROR HANDLING
+
+The application must never crash because:
+
+* Adapter disappears
+* Cable is unplugged
+* Wi-Fi disconnects
+* Windows returns an error
+* Invalid configuration is entered
+* PowerShell fails
+* API call fails
+* Network stack is temporarily unavailable
+* User cancels UAC
+* Database cannot be accessed
+
+All errors must be caught and translated into understandable messages.
+
+Do not expose raw stack traces to normal users.
+
+Example:
+
+BAD:
+
+```text
+subprocess.CalledProcessError: Command returned non-zero exit status 1
+```
+
+GOOD:
+
+```text
+Unable to change the network configuration.
+
+Windows rejected the requested configuration.
+
+Details:
+The gateway address is not valid for this interface.
+```
+
+A technical details expandable section can be available for engineers.
+
+---
+
+# 23. LOGGING
+
+Implement structured logging.
+
+Log:
+
+* Application startup
+* Adapter discovery
+* Adapter selection
+* Configuration before modification
+* Requested configuration
+* Operation result
+* Verification result
+* Rollback
+* Errors
+* UAC/elevation events
+
+Never log sensitive credentials.
+
+Logs should be stored locally.
+
+Example:
+
+```text
+logs/
+    ip_changer.log
+```
+
+Use log rotation.
+
+---
+
+# 24. OPERATION HISTORY
+
+Preferably provide a small "History" section.
+
+Example:
+
+```text
+RECENT ACTIVITY
+
+✓ 09:32
+Ethernet
+192.168.10.100 → 192.168.20.100
+
+✓ 09:28
+Ethernet
+DHCP → Static
+
+✕ 09:14
+Wi-Fi
+Configuration failed
+```
+
+History can be stored in SQLite.
+
+---
+
+# 25. NETWORK REFRESH
+
+Provide a refresh button:
+
+```text
+↻ Refresh
+```
+
+Refreshing must:
+
+* Re-enumerate adapters
+* Read current configuration
+* Update GUI
+* Preserve the selected adapter when possible
+
+Automatic refresh can also be implemented when useful.
+
+Do not continuously poll aggressively.
+
+---
+
+# 26. SAFE UI STATES
+
+The Apply button must be disabled when:
+
+* No adapter selected
+* Static configuration incomplete
+* Invalid IP
+* Invalid subnet
+* Invalid gateway
+* Operation currently running
+
+While applying:
+
+```text
+Applying configuration…
+
+● Updating network adapter
+● Waiting for Windows
+● Verifying configuration
+```
+
+The user must not be able to trigger multiple simultaneous network operations.
+
+Use an operation lock.
+
+---
+
+# 27. THREADING / UI RESPONSIVENESS
+
+Network operations must NEVER block the GUI thread.
+
+Use:
+
+* QThread
+* QRunnable
+* QThreadPool
+* or another appropriate Qt mechanism
+
+The GUI must remain responsive during:
+
+* adapter discovery
+* configuration changes
+* DHCP acquisition
+* verification
+* rollback
+
+---
+
+# 28. NETWORK CONFIGURATION ENGINE
+
+Create an abstraction such as:
+
+```python
+class NetworkManager:
+    def list_adapters(self):
+        ...
+
+    def get_configuration(self, adapter):
+        ...
+
+    def set_dhcp(self, adapter):
+        ...
+
+    def set_static(self, adapter, configuration):
+        ...
+
+    def restore_configuration(self, snapshot):
+        ...
+
+    def verify_configuration(self, adapter, expected):
+        ...
+```
+
+The GUI must not directly execute PowerShell/netsh commands.
+
+---
+
+# 29. WINDOWS IMPLEMENTATION
+
+Investigate and choose the most reliable Windows-native mechanism.
+
+Priority:
+
+1. Windows networking APIs
+2. CIM/WMI where appropriate
+3. PowerShell
+4. netsh only where required
+
+Avoid fragile assumptions about command output.
+
+If a command-line tool is required:
+
+* Use subprocess safely.
+* Never use shell=True unless absolutely necessary.
+* Pass arguments as lists.
+* Capture stdout/stderr.
+* Validate exit codes.
+* Implement timeout.
+* Log failures.
+
+---
+
+# 30. SUBNET HANDLING
+
+Internally normalize network configurations.
+
+For example:
+
+```text
+255.255.255.0
+```
+
+should internally correspond to:
+
+```text
+/24
+```
+
+Use Python's `ipaddress` module.
+
+Example:
+
+```python
+ipaddress.IPv4Address(...)
+ipaddress.IPv4Network(...)
+```
+
+Do not implement custom IP parsing.
+
+---
+
+# 31. GATEWAY VALIDATION
+
+The validator should identify obvious errors.
+
+Example:
+
+```text
+IP:
+192.168.10.50
+
+Mask:
+255.255.255.0
+
+Gateway:
+192.168.20.1
+```
+
+Display warning:
+
+```text
+Gateway is outside the configured subnet.
+```
+
+However, allow the user to override warnings when technically legitimate.
+
+Distinguish:
+
+### ERROR
+
+Configuration cannot be applied.
+
+### WARNING
+
+Configuration is unusual but potentially valid.
+
+---
+
+# 32. MULTIPLE IP ADDRESSES
+
+The implementation must not destroy additional IP addresses accidentally.
+
+Example current state:
+
+```text
+192.168.10.100
+192.168.10.101
+```
+
+If the user changes the primary configuration, do not silently delete the second address unless explicitly requested.
+
+If the first version cannot safely support editing multiple addresses, clearly preserve them.
+
+---
+
+# 33. IPV6
+
+Initial version:
+
+* IPv4 configuration is mandatory.
+* IPv6 should be detected and displayed if possible.
+* Do not modify IPv6 unless explicitly implemented and tested.
+
+Never disable IPv6 as a side effect of changing IPv4.
+
+---
+
+# 34. DNS
+
+Initial release:
+
+* Display DNS configuration if practical.
+* Do not modify DNS unless explicitly requested by the user.
+
+Architecture should support future:
+
+```text
+Preferred DNS
+Secondary DNS
+```
+
+---
+
+# 35. PRESET IMPORT / EXPORT
+
+Preferably implement JSON export/import.
+
+Example:
+
+```text
+[ Export Presets ]
+[ Import Presets ]
+```
+
+JSON format:
+
+```json
+{
+  "version": 1,
+  "presets": [
+    {
+      "name": "PLC Network",
+      "mode": "static",
+      "ip_address": "192.168.10.100",
+      "subnet_mask": "255.255.255.0",
+      "gateway": "192.168.10.1"
+    }
+  ]
+}
+```
+
+Import must validate all entries before inserting them into the database.
+
+Never execute anything from an imported file.
+
+---
+
+# 36. SECURITY
+
+Security requirements:
+
+* Validate all user input.
+* Never execute user-entered strings as shell commands.
+* Avoid shell injection.
+* Use parameterized SQLite queries.
+* Do not store passwords.
+* Do not require Internet connectivity.
+* Do not send telemetry.
+* Do not communicate with external servers.
+* Do not modify firewall rules.
+* Do not modify unrelated network settings.
+
+The application should be fully local.
+
+---
+
+# 37. INDUSTRIAL ENVIRONMENT REQUIREMENTS
+
+The tool may be used on machines connected to:
+
+* PLCs
+* SCADA
+* industrial Ethernet networks
+* sensors
+* drives
+* robots
+* engineering workstations
+
+Therefore:
+
+### Reliability > convenience
+
+Never silently change another adapter.
+
+Never silently fall back to another adapter.
+
+Never silently delete existing configuration.
+
+Never assume that "Ethernet" is the correct interface.
+
+Always show:
+
+```text
+ADAPTER
+IP
+SUBNET
+GATEWAY
+```
+
+before applying.
+
+---
+
+# 38. DRY-RUN MODE
+
+Implement a dry-run capability internally.
+
+Example:
+
+```text
+DRY RUN
+
+Adapter:
+Ethernet
+
+Would change:
+
+IP:
+192.168.1.100 → 192.168.10.100
+
+Subnet:
+255.255.255.0 → 255.255.255.0
+
+Gateway:
+192.168.1.1 → 192.168.10.1
+```
+
+This can be used for testing and diagnostics.
+
+---
+
+# 39. TESTING
+
+Create comprehensive automated tests.
+
+Minimum:
+
+### IP validation
+
+* Valid IPv4
+* Invalid IPv4
+* Broadcast
+* Network address
+* Loopback
+* APIPA
+
+### Subnet validation
+
+* /8
+* /16
+* /24
+* /30
+* invalid masks
+
+### Gateway validation
+
+* Same subnet
+* Different subnet
+* Invalid gateway
+
+### Presets
+
+* Create
+* Read
+* Update
+* Delete
+* Import
+* Export
+
+### Adapter handling
+
+Mock:
+
+* Adapter connected
+* Adapter disconnected
+* Adapter missing
+* Multiple adapters
+* Virtual adapters
+
+### Configuration engine
+
+Mock Windows network operations.
+
+Test:
+
+* Successful configuration
+* Failed configuration
+* Verification failure
+* Rollback
+* DHCP
+
+---
+
+# 40. TESTING ON REAL WINDOWS
+
+In addition to unit tests, provide a manual test plan.
+
+Test:
+
+1. Ethernet + DHCP
+2. Ethernet + Static IP
+3. Static → DHCP
+4. DHCP → Static
+5. Change IP only
+6. Change subnet
+7. Change gateway
+8. Invalid IP
+9. Invalid subnet
+10. Invalid gateway
+11. Adapter disconnected
+12. Adapter disabled
+13. Multiple adapters
+14. Virtual adapters
+15. UAC cancelled
+16. Configuration failure
+17. Rollback
+18. Preset application
+19. Preset for missing adapter
+20. Application restart
+
+Document expected results.
+
+---
+
+# 41. FAIL-SAFE REQUIREMENTS
+
+The application must follow this principle:
+
+> If the application cannot determine with high confidence what adapter/configuration it is operating on, it must stop and ask the user.
+
+Never guess.
+
+Never automatically select another adapter.
+
+Never automatically modify multiple adapters.
+
+Never silently retry a destructive operation indefinitely.
+
+---
+
+# 42. CONFIRMATION FOR DANGEROUS OPERATIONS
+
+Changing IP configuration is potentially disruptive.
+
+For significant changes show confirmation.
+
+Example:
+
+```text
+Apply configuration?
+
+⚠ This may disconnect the computer from the network.
+
+Adapter:
+Ethernet
+
+NEW CONFIGURATION
+
+IP       10.0.0.100
+Subnet   255.255.255.0
+Gateway  10.0.0.1
+
+[ CANCEL ]        [ APPLY ]
+```
+
+Do not require confirmation for harmless actions such as refresh.
+
+---
+
+# 43. USER EXPERIENCE
+
+The target user may be an automation/commissioning technician.
+
+The tool must be usable without reading documentation.
+
+The normal workflow should be:
+
+```text
+1. Open IP_CHANGER
+2. Select adapter
+3. Select DHCP or Static
+4. Enter IP
+5. Enter subnet
+6. Enter gateway
+7. Click APPLY
+8. Confirm
+9. Done
+```
+
+For presets:
+
+```text
+1. Select adapter
+2. Select preset
+3. Click APPLY
+4. Confirm
+5. Done
+```
+
+---
+
+# 44. VISUAL STATUS
+
+Use clear states:
+
+```text
+✓ Configuration matches selected preset
+```
+
+```text
+● Current configuration
+```
+
+```text
+⚠ Configuration differs from preset
+```
+
+```text
+✕ Configuration failed
+```
+
+Avoid relying only on colors.
+
+Use icons + text.
+
+---
+
+# 45. APPLICATION STARTUP
+
+At startup:
+
+1. Check Windows version.
+2. Check Administrator status.
+3. Initialize database.
+4. Initialize logging.
+5. Enumerate adapters.
+6. Load presets.
+7. Display main window.
+
+Startup errors must have user-friendly dialogs.
+
+---
+
+# 46. DATABASE LOCATION
+
+Store application data in an appropriate Windows per-user application data directory rather than next to the executable when possible.
+
+Example conceptually:
+
+```text
+%LOCALAPPDATA%\IP_CHANGER\
+```
+
+Containing:
+
+```text
+ip_changer.db
+logs\
+```
+
+Do not require write access to:
+
+```text
+C:\Program Files\
+```
+
+---
+
+# 47. CONFIGURATION FILE
+
+Use a small application configuration file for:
+
+* Theme
+* Last selected adapter
+* Window size
+* Window position
+* Preferences
+
+Do not store network presets only in JSON/config files.
+
+Presets must be stored in SQLite.
+
+---
+
+# 48. BUILD / DISTRIBUTION
+
+Provide a reproducible build process.
+
+Preferred:
+
+```text
+PyInstaller
+```
+
+Generate:
+
+```text
+IP_CHANGER.exe
+```
+
+Prefer a single executable if practical.
+
+If Windows requires additional files, package them into an installer.
+
+The final executable should:
+
+* Request Administrator elevation correctly.
+* Have an application icon.
+* Have a meaningful version number.
+* Not open a console window.
+* Start reliably from a normal Windows desktop.
+
+---
+
+# 49. VERSIONING
+
+Display in:
+
+```text
+Settings → About
+```
+
+Example:
+
+```text
+IP CHANGER
+Version 1.0.0
+
+Professional Network Configuration Utility
+```
+
+Use semantic versioning.
+
+---
+
+# 50. ABOUT / DIAGNOSTICS
+
+Include a small diagnostics page.
+
+Show:
+
+```text
+Application version
+Windows version
+Administrator status
+Detected adapters
+Adapter GUID
+MAC address
+IPv4
+Subnet
+Gateway
+DHCP
+```
+
+Allow:
+
+```text
+Copy diagnostic information
+```
+
+This is useful when troubleshooting commissioning PCs.
+
+---
+
+# 51. DESIGN LANGUAGE
+
+The design should feel like:
+
+* modern
+* professional
+* technical
+* clean
+* trustworthy
+* minimal
+
+Avoid:
+
+* excessive animations
+* gradients everywhere
+* huge icons
+* complicated menus
+* unnecessary dashboards
+* excessive colors
+
+The primary screen should focus on one task:
+
+**configure the selected network adapter.**
+
+---
+
+# 52. ACCESSIBILITY
+
+Support:
+
+* Keyboard navigation
+* Tab navigation
+* Enter to confirm
+* Escape to cancel
+* Visible focus indicators
+* Reasonable font sizes
+
+Buttons must have clear labels.
+
+---
+
+# 53. NO INTERNET DEPENDENCY
+
+The application must work completely offline.
+
+This is a strict requirement.
+
+Do not use:
+
+* cloud services
+* web APIs
+* telemetry
+* online licensing
+* remote configuration
+* external databases
+
+---
+
+# 54. RECOVERY AFTER APPLICATION CRASH
+
+Where practical, maintain the last configuration snapshot.
+
+If the application crashes immediately after changing the configuration, reopening the application should detect the previous incomplete operation.
+
+Display:
+
+```text
+Previous network operation did not complete successfully.
+
+The last operation involved:
+
+Adapter: Ethernet
+Previous IP: 192.168.1.100
+Requested IP: 192.168.10.100
+
+[ CHECK CURRENT CONFIGURATION ]
+[ RESTORE PREVIOUS CONFIGURATION ]
+```
+
+Do not automatically rollback after application restart without user confirmation.
+
+---
+
+# 55. OPERATION TRANSACTION MODEL
+
+Treat configuration changes as transactions conceptually:
+
+```text
+READ
+ ↓
+SNAPSHOT
+ ↓
+VALIDATE
+ ↓
+CONFIRM
+ ↓
+APPLY
+ ↓
+WAIT
+ ↓
+VERIFY
+ ↓
+SUCCESS
+```
+
+If:
+
+```text
+APPLY
+ ↓
+FAIL
+```
+
+then:
+
+```text
+ROLLBACK
+ ↓
+VERIFY ROLLBACK
+```
+
+If rollback itself fails, clearly report this.
+
+---
+
+# 56. FINAL ACCEPTANCE CRITERIA
+
+The application is considered complete only when:
+
+### GUI
+
+* Modern
+* Clean
+* Simple
+* Responsive
+
+### Networking
+
+* Lists adapters correctly
+* Reads current configuration correctly
+* Supports DHCP
+* Supports static IPv4
+* Changes IP/subnet/gateway
+* Verifies changes
+
+### Reliability
+
+* Has rollback
+* Handles failures
+* Handles disappearing adapters
+* Handles UAC
+* Does not modify wrong adapters
+* Does not silently destroy configuration
+
+### Presets
+
+* Save
+* Load
+* Apply
+* Edit
+* Delete
+* Import
+* Export
+
+### Storage
+
+* SQLite
+* Persistent
+* Robust
+
+### Security
+
+* Administrator elevation
+* No shell injection
+* No unnecessary network access
+* No telemetry
+
+### Distribution
+
+* Builds into Windows executable
+* No Python installation required
+* No console window
+* Reproducible build
+
+---
+
+# 57. CLAUDE DEVELOPMENT INSTRUCTIONS
+
+Do NOT immediately generate the entire application in one giant file.
+
+Work incrementally.
+
+### PHASE 1
+
+Create project structure and architecture.
+
+### PHASE 2
+
+Implement Windows adapter discovery.
+
+Before proceeding, test that all adapters and their current configuration can be correctly detected.
+
+### PHASE 3
+
+Implement the network configuration engine.
+
+Implement:
+
+* DHCP
+* Static IP
+* Read
+* Verify
+* Rollback
+
+### PHASE 4
+
+Implement validation.
+
+### PHASE 5
+
+Implement SQLite preset database.
+
+### PHASE 6
+
+Implement GUI.
+
+### PHASE 7
+
+Integrate GUI + network engine.
+
+### PHASE 8
+
+Implement logging and diagnostics.
+
+### PHASE 9
+
+Implement import/export.
+
+### PHASE 10
+
+Implement automated tests.
+
+### PHASE 11
+
+Perform real Windows testing.
+
+### PHASE 12
+
+Build executable.
+
+---
+
+# 58. IMPORTANT CLAUDE RULE
+
+At every development stage:
+
+**DO NOT assume the implementation works.**
+
+After implementing each critical component:
+
+1. Run it.
+2. Test it.
+3. Inspect errors.
+4. Fix errors.
+5. Re-run.
+6. Only then continue.
+
+For network-changing functionality, prioritize correctness and verification over speed of implementation.
+
+If there is uncertainty about a Windows API or behavior, investigate the actual Windows behavior rather than guessing.
+
+---
+
+# 59. FINAL DELIVERABLES
+
+Claude must produce:
+
+```text
+IP_CHANGER/
+├── complete source code
+├── requirements.txt
+├── README.md
+├── tests/
+├── build script
+├── executable build instructions
+├── database initialization
+└── manual test procedure
+```
+
+README must explain:
+
+* Installation
+* Running
+* Administrator requirements
+* Creating presets
+* Applying configurations
+* Rollback
+* Troubleshooting
+* Building the executable
+
+---
+
+# 60. FINAL QUALITY STANDARD
+
+The application must NOT feel like a prototype.
+
+It must feel like a small professional engineering utility that could be used by a commissioning technician on a real industrial site.
+
+The most important priorities are:
+
+1. **Reliability**
+2. **Safety**
+3. **Correct adapter identification**
+4. **Correct configuration**
+5. **Verification**
+6. **Rollback**
+7. **Simple UX**
+8. **Modern GUI**
+9. **Maintainable architecture**
+
+Do not sacrifice reliability for visual effects or implementation speed.
