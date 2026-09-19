@@ -1,5 +1,7 @@
 # IP CHANGER
 
+[![CI](https://github.com/byfekic/NIC_IP_Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/byfekic/NIC_IP_Manager/actions/workflows/ci.yml)
+
 **Professional Network Configuration Utility** — version 1.0.0
 
 A small, reliable Windows tool for changing an adapter's IPv4 configuration.
@@ -9,6 +11,11 @@ industrial Ethernet networks, where a wrong or half-applied change is expensive.
 The design priority is **reliability over convenience**: the application
 validates before it acts, snapshots before it changes, verifies after it
 changes, and can always put the previous configuration back.
+
+![The IP CHANGER main window: adapter selection, the live configuration read back from Windows, the static address form, and the saved configuration list](docs/screenshots/01-main-dark.png)
+
+<sub>Adapters and presets in this screenshot are synthetic — see
+[docs/screenshots](docs/screenshots/).</sub>
 
 ---
 
