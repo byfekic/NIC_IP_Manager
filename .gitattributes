@@ -1,0 +1,17 @@
+# Normalise every text file to LF in the repository. Working copies on Windows
+# still get CRLF when core.autocrlf is set; this only fixes what is committed,
+# so the history stops depending on each contributor's Git configuration.
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.pyi   text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.txt   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.spec  text eol=lf
+*.json  text eol=lf
+
+*.png   binary
+*.ico   binary
