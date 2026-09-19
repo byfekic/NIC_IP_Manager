@@ -135,7 +135,7 @@ def check_supported_platform() -> tuple[bool, str]:
             "IP CHANGER configures Windows network adapters and can only run on Windows."
         )
     try:
-        version = sys.getwindowsversion()  # type: ignore[attr-defined]
+        version = sys.getwindowsversion()
     except Exception:  # pragma: no cover
         return True, ""
     if version.major < 10:

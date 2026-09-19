@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.models.adapter import Adapter
-from app.models.configuration import ConfigMode, IPConfiguration, mask_to_prefix
+from app.models.configuration import ConfigMode, IPConfiguration
 from app.network.validator import validate_preset_payload
 from app.storage.database import Database
 from app.utils.errors import StorageError
@@ -255,7 +255,7 @@ class PresetStore:
         return candidate
 
     # ------------------------------------------------------- import/export
-    def export_to_file(self, path: Path) -> int:
+    def export_to_file(self, path: Path | str) -> int:
         presets = self.list_all()
         payload = {
             "version": EXPORT_VERSION,
@@ -275,7 +275,7 @@ class PresetStore:
         log.info("Exported %d presets to %s", len(presets), path)
         return len(presets)
 
-    def import_from_file(self, path: Path, overwrite: bool = False) -> tuple[int, int, list[str]]:
+    def import_from_file(self, path: Path | str, overwrite: bool = False) -> tuple[int, int, list[str]]:
         """Import presets from JSON.
 
         Every entry is validated before anything is written, and nothing from

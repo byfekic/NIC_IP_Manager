@@ -9,3 +9,7 @@ build/version_info.txt
 *.spec.bak
 *.db
 *.log
+build/lib/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/

@@ -57,7 +57,10 @@ VSVersionInfo(
 
 def write_version_info() -> Path:
     """Generate the Windows version resource from the single source of truth."""
-    major, minor, patch = (list(map(int, __version__.split("."))) + [0, 0, 0])[:3]
+    # Tolerates a suffixed version such as "1.2.0rc1": non-numeric parts are
+    # dropped and the tuple is padded to three components.
+    numbers = [int(part) for part in __version__.split(".") if part.isdigit()]
+    major, minor, patch = (*numbers, 0, 0, 0)[:3]
     target = PROJECT_ROOT / "build" / "version_info.txt"
     target.write_text(
         VERSION_TEMPLATE.format(

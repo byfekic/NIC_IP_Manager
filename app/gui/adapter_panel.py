@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.gui.styles import Palette, status_color
+from app.gui.styles import Palette
 from app.gui.widgets import (
     ICON_ACTIVE,
     ICON_INACTIVE,
@@ -32,7 +32,6 @@ from app.gui.widgets import (
     KeyValueGrid,
     StatusIndicator,
     ValidatedLineEdit,
-    muted_label,
 )
 from app.models.adapter import Adapter
 from app.models.configuration import ConfigMode, IPConfiguration, mask_to_prefix

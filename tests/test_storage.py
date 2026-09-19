@@ -6,7 +6,6 @@ import json
 
 import pytest
 
-from app.models.adapter import OperStatus
 from app.models.configuration import ConfigMode, IPConfiguration
 from app.storage.presets import resolve_preset_adapter
 from app.utils.errors import StorageError

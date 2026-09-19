@@ -458,7 +458,7 @@ class PowerShellRunner:
             script_path,
         ]
 
-        log.debug("PowerShell op=%s params=%s", op, {k: v for k, v in params.items()})
+        log.debug("PowerShell op=%s params=%s", op, dict(params))
         try:
             completed = subprocess.run(
                 command,

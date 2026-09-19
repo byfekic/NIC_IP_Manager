@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models.adapter import Adapter, AdapterKind, IPv4Address, OperStatus
+from app.models.adapter import AdapterKind, IPv4Address, OperStatus
 from app.network.adapter_manager import AdapterManager
 from app.network.powershell import PowerShellRunner, translate_error
 from tests.conftest import make_adapter

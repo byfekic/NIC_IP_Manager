@@ -8,19 +8,13 @@ back (specification sections 13, 14, 39, 55).
 
 from __future__ import annotations
 
-import pytest
-
-from app.models.adapter import OperStatus
 from app.models.configuration import (
-    ConfigMode,
     ConfigurationSnapshot,
     IPConfiguration,
     ResultStatus,
 )
 from app.network.ip_manager import NetworkManager
 from app.network.verifier import (
-    ConflictStatus,
-    VerificationOutcome,
     verify_configuration,
 )
 from tests.conftest import FakeAdapterManager, FakeRunner, make_adapter

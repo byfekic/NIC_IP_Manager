@@ -13,13 +13,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.models.adapter import Adapter, IPv4Address, OperStatus  # noqa: E402
-from app.network.adapter_manager import AdapterManager  # noqa: E402
-from app.network.powershell import PSResult  # noqa: E402
-from app.storage.database import Database  # noqa: E402
-from app.storage.history import HistoryStore  # noqa: E402
-from app.storage.journal import OperationJournal  # noqa: E402
-from app.storage.presets import PresetStore  # noqa: E402
+from app.models.adapter import Adapter, IPv4Address, OperStatus
+from app.network.adapter_manager import AdapterManager
+from app.network.powershell import PSResult
+from app.storage.database import Database
+from app.storage.history import HistoryStore
+from app.storage.journal import OperationJournal
+from app.storage.presets import PresetStore
 
 
 def make_adapter(

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -44,7 +43,7 @@ from app.gui.widgets import (
     muted_label,
 )
 from app.models.adapter import Adapter
-from app.models.configuration import ConfigurationSnapshot, IPConfiguration
+from app.models.configuration import IPConfiguration
 from app.network.validator import validate_ip_text, validate_mask_text
 
 

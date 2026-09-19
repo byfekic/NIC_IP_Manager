@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ip-changer"
+description = "Professional Network Configuration Utility for Windows"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.12"
+dynamic = ["version"]
+dependencies = ["PySide6>=6.6,<7.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pyinstaller>=6.3", "ruff>=0.6", "mypy>=1.11"]
+
+[project.gui-scripts]
+ip-changer = "app.main:main"
+
+[project.urls]
+Source = "https://github.com/byfekic/NIC_IP_Manager"
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # import sorting
+    "B",   # bugbear
+    "C4",  # comprehensions
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    # The Windows API layer mirrors the C struct and parameter names, and the
+    # PowerShell script is a single long string constant; neither is improved
+    # by being wrapped.
+    "E501",
+    # Windows environment variables are genuinely capitalised (SystemRoot,
+    # LOCALAPPDATA); "fixing" them would break the lookup.
+    "SIM112",
+    # Style preferences that lose information here: the explicit early returns
+    # and try/except blocks these flag carry comments explaining why Windows
+    # behaves the way it does, and contextlib.suppress has nowhere to put them.
+    "SIM103",
+    "SIM105",
+    "SIM108",
+    "RUF005",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"docs/make_screenshots.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+# app/gui is excluded on purpose. PySide6 ships stubs that only declare the
+# scoped Qt enums (QMessageBox.Icon.Critical), while the runtime also accepts
+# the unscoped aliases the GUI uses (QMessageBox.Critical). Checking it would
+# produce ~70 errors that are all stub artefacts rather than defects.
+files = [
+    "app/models",
+    "app/network",
+    "app/security",
+    "app/storage",
+    "app/utils",
+]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true

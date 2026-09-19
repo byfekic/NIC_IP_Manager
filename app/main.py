@@ -55,7 +55,9 @@ def parse_arguments(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 def _fatal(title: str, message: str) -> int:
     """Show a startup failure without requiring a running main window."""
-    app = QApplication.instance() or QApplication(sys.argv)
+    # The reference is load-bearing: a QApplication created here must stay
+    # alive for the lifetime of the dialog below, or Qt tears it down.
+    app = QApplication.instance() or QApplication(sys.argv)  # noqa: F841
     box = QMessageBox()
     box.setIcon(QMessageBox.Critical)
     box.setWindowTitle(title)

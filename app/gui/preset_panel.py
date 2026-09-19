@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -22,7 +21,6 @@ from app.gui.widgets import (
     ICON_MENU,
     ICON_OK,
     ICON_WARN,
-    Card,
     muted_label,
 )
 from app.models.adapter import Adapter

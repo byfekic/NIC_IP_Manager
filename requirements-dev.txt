@@ -1,4 +1,8 @@
+# IP_CHANGER development dependencies.
+# Equivalent to `pip install -e ".[dev]"`, which is what CI uses.
 -r requirements.txt
 
 pytest>=8.0
 pyinstaller>=6.3
+ruff>=0.6
+mypy>=1.11

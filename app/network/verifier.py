@@ -80,12 +80,11 @@ def verify_configuration(adapter: Adapter, expected: IPConfiguration) -> Verific
             f"but {prefix_to_mask(expected.prefix_length)} was requested."
         )
 
-    if expected.gateway:
-        if expected.gateway not in adapter.ipv4_gateways:
-            found = ", ".join(adapter.ipv4_gateways) or "none"
-            mismatches.append(
-                f"The default gateway is {found}, but {expected.gateway} was requested."
-            )
+    if expected.gateway and expected.gateway not in adapter.ipv4_gateways:
+        found = ", ".join(adapter.ipv4_gateways) or "none"
+        mismatches.append(
+            f"The default gateway is {found}, but {expected.gateway} was requested."
+        )
 
     extra = [a.address for a in adapter.routable_ipv4 if a.address != expected.ip_address]
     if extra:

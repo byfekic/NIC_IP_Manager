@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -49,7 +49,6 @@ from app.gui.widgets import ICON_ACTIVE, ICON_WARN, Divider
 from app.gui.workers import OperationLock, TaskRunner
 from app.models.adapter import Adapter
 from app.models.configuration import (
-    ConfigMode,
     IPConfiguration,
     OperationResult,
     ResultStatus,
