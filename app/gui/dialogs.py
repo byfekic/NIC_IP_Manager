@@ -18,6 +18,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -45,6 +46,7 @@ from app.gui.widgets import (
 from app.models.adapter import Adapter
 from app.models.configuration import IPConfiguration
 from app.network.validator import validate_ip_text, validate_mask_text
+from app.storage.presets import FOLDER_NAME_LIMIT
 
 
 class BaseDialog(QDialog):
@@ -70,6 +72,47 @@ class BaseDialog(QDialog):
 
     def layout_root(self) -> QVBoxLayout:
         return self._root
+
+
+class FolderChooser(QWidget):
+    """Pick an existing folder or type a new one. Blank means ungrouped."""
+
+    def __init__(
+        self,
+        folders: Optional[list] = None,
+        current: str = "",
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+
+        self.label = QLabel("Folder (optional)")
+        self.label.setObjectName("FieldLabel")
+
+        self.combo = QComboBox()
+        self.combo.setEditable(True)
+        self.combo.setMinimumHeight(38)
+        self.combo.setToolTip("Group this configuration with others, or leave it blank.")
+        self.combo.addItem("")
+        for name in folders or []:
+            if name:
+                self.combo.addItem(name)
+        self.combo.setCurrentText(current or "")
+
+        line_edit = self.combo.lineEdit()
+        if line_edit is not None:
+            line_edit.setPlaceholderText("No folder")
+            line_edit.setMaxLength(FOLDER_NAME_LIMIT)
+
+        layout.addWidget(self.label)
+        layout.addWidget(self.combo)
+
+    def value(self) -> str:
+        """The chosen folder. The store normalises whitespace and length."""
+        return self.combo.currentText().strip()
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +317,8 @@ class PresetDialog(BaseDialog):
         name: str = "",
         description: str = "",
         title: str = "Save configuration",
+        folders: Optional[list] = None,
+        folder: str = "",
     ) -> None:
         super().__init__(parent, title, width=470)
         self._palette = palette
@@ -288,6 +333,9 @@ class PresetDialog(BaseDialog):
         self.description_field.set_required(False)
         self.description_field.set_text(description)
         self._root.addWidget(self.description_field)
+
+        self.folder_field = FolderChooser(folders, folder)
+        self._root.addWidget(self.folder_field)
 
         summary = Card("Configuration", flat=True)
         grid = KeyValueGrid()
@@ -357,6 +405,10 @@ class PresetDialog(BaseDialog):
         return self.description_field.text()
 
     @property
+    def preset_folder(self) -> str:
+        return self.folder_field.value()
+
+    @property
     def remember_adapter(self) -> bool:
         return self.link_adapter is not None and self.link_adapter.isChecked()
 
@@ -371,6 +423,8 @@ class EditPresetDialog(BaseDialog):
         name: str,
         configuration: IPConfiguration,
         description: str = "",
+        folders: Optional[list] = None,
+        folder: str = "",
     ) -> None:
         super().__init__(parent, "Edit configuration", width=470)
         self.add_title("Edit configuration")
@@ -402,6 +456,9 @@ class EditPresetDialog(BaseDialog):
         self.description_field.set_required(False)
         self.description_field.set_text(description)
         self._root.addWidget(self.description_field)
+
+        self.folder_field = FolderChooser(folders, folder)
+        self._root.addWidget(self.folder_field)
 
         self.error = QLabel("")
         self.error.setObjectName("ErrorLabel")
@@ -454,6 +511,46 @@ class EditPresetDialog(BaseDialog):
     @property
     def preset_description(self) -> str:
         return self.description_field.text()
+
+    @property
+    def preset_folder(self) -> str:
+        return self.folder_field.value()
+
+
+class FolderDialog(BaseDialog):
+    """Choose a folder for one preset, or rename a folder outright."""
+
+    def __init__(
+        self,
+        parent: Optional[QWidget],
+        title: str,
+        message: str,
+        folders: Optional[list] = None,
+        folder: str = "",
+    ) -> None:
+        super().__init__(parent, title, width=430)
+        self.add_title(title)
+        self._root.addWidget(muted_label(message))
+
+        self.folder_field = FolderChooser(folders, folder)
+        self._root.addWidget(self.folder_field)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QPushButton("CANCEL")
+        cancel.setObjectName("SubtleButton")
+        cancel.clicked.connect(self.reject)
+        confirm = QPushButton("SAVE")
+        confirm.setObjectName("PrimaryButton")
+        confirm.setDefault(True)
+        confirm.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(confirm)
+        self._root.addLayout(buttons)
+
+    @property
+    def folder(self) -> str:
+        return self.folder_field.value()
 
 
 class RenameDialog(BaseDialog):

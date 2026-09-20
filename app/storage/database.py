@@ -37,7 +37,7 @@ from app.utils.paths import database_path
 log = get_logger(__name__)
 
 # The schema this build expects. Bump it when adding a migration below.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # The version _BASELINE creates. This does not move when SCHEMA_VERSION does.
 _BASELINE_VERSION = 1
@@ -76,23 +76,24 @@ CREATE INDEX IF NOT EXISTS idx_presets_name      ON presets (name);
 
 Migration = Callable[[sqlite3.Connection], None]
 
+def _v2_preset_folders(connection: sqlite3.Connection) -> None:
+    """Group saved configurations under an optional folder name.
+
+    Existing presets default to the empty string, which the panel shows as
+    ungrouped, so an upgraded database looks exactly as it did before.
+    """
+    connection.execute("ALTER TABLE presets ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
+
+
 # Upgrade steps keyed by the version each one produces. A step receives the
 # open connection and runs inside a transaction that the caller opens, so it
 # must not commit and must not use a statement SQLite refuses inside one
 # (VACUUM, or toggling PRAGMA foreign_keys). user_version is set for it once
-# the step returns.
-#
-# To add DNS servers to presets, for example:
-#
-#     def _v2_preset_dns(connection: sqlite3.Connection) -> None:
-#         connection.execute(
-#             "ALTER TABLE presets ADD COLUMN dns_servers TEXT NOT NULL DEFAULT ''"
-#         )
-#
-#     _MIGRATIONS = {2: _v2_preset_dns}
-#
-# and set SCHEMA_VERSION = 2.
-_MIGRATIONS: dict[int, Migration] = {}
+# the step returns. Add a step here and bump SCHEMA_VERSION; never edit
+# _BASELINE.
+_MIGRATIONS: dict[int, Migration] = {
+    2: _v2_preset_folders,
+}
 
 
 class Database:

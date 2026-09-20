@@ -24,6 +24,7 @@ DEFAULTS: dict[str, Any] = {
     "window_y": -1,
     "check_ip_conflicts": True,
     "show_virtual_adapters": True,
+    "collapsed_folders": [],
 }
 
 

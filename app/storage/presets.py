@@ -24,6 +24,14 @@ log = get_logger(__name__)
 
 EXPORT_VERSION = 1
 
+# Folder names are labels, not paths: one level, no nesting.
+FOLDER_NAME_LIMIT = 60
+
+
+def clean_folder(name: str) -> str:
+    """Normalise a folder label. The empty string means ungrouped."""
+    return " ".join((name or "").split())[:FOLDER_NAME_LIMIT]
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -43,6 +51,7 @@ class Preset:
     description: str
     created_at: str
     updated_at: str
+    folder: str = ""
 
     @property
     def configuration(self) -> IPConfiguration:
@@ -75,6 +84,7 @@ class Preset:
             "adapter_name": self.adapter_name,
             "adapter_identifier": self.adapter_identifier,
             "adapter_mac": self.adapter_mac,
+            "folder": self.folder,
         }
 
 
@@ -100,11 +110,31 @@ class PresetStore:
             description=row["description"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            folder=row["folder"],
         )
 
     def list_all(self) -> list[Preset]:
-        rows = self.db.query("SELECT * FROM presets ORDER BY name COLLATE NOCASE")
+        """Every preset, named folders first and ungrouped entries last."""
+        rows = self.db.query(
+            "SELECT * FROM presets "
+            "ORDER BY (folder = '') ASC, folder COLLATE NOCASE, name COLLATE NOCASE"
+        )
         return [self._row_to_preset(r) for r in rows]
+
+    def folders(self) -> list[str]:
+        """Folder names currently in use, in display order."""
+        rows = self.db.query(
+            "SELECT DISTINCT folder FROM presets WHERE folder <> '' "
+            "ORDER BY folder COLLATE NOCASE"
+        )
+        return [r["folder"] for r in rows]
+
+    def grouped(self) -> list[tuple[str, list[Preset]]]:
+        """Presets bucketed by folder, in the order list_all returns them."""
+        groups: dict[str, list[Preset]] = {}
+        for preset in self.list_all():
+            groups.setdefault(preset.folder, []).append(preset)
+        return list(groups.items())
 
     def get(self, preset_id: int) -> Optional[Preset]:
         row = self.db.query_one("SELECT * FROM presets WHERE id = ?", (preset_id,))
@@ -121,6 +151,7 @@ class PresetStore:
         configuration: IPConfiguration,
         adapter: Optional[Adapter] = None,
         description: str = "",
+        folder: str = "",
     ) -> Preset:
         name = name.strip()
         if not name:
@@ -130,8 +161,9 @@ class PresetStore:
             """
             INSERT INTO presets
                 (name, adapter_identifier, adapter_mac, adapter_name, mode,
-                 ip_address, subnet_mask, gateway, description, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ip_address, subnet_mask, gateway, description, folder,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -143,6 +175,7 @@ class PresetStore:
                 configuration.subnet_mask if not configuration.is_dhcp else "",
                 configuration.gateway if not configuration.is_dhcp else "",
                 description.strip(),
+                clean_folder(folder),
                 now,
                 now,
             ),
@@ -160,6 +193,7 @@ class PresetStore:
         adapter: Optional[Adapter] = None,
         description: str = "",
         keep_adapter: bool = False,
+        folder: Optional[str] = None,
     ) -> Preset:
         existing = self.get(preset_id)
         if existing is None:
@@ -179,7 +213,7 @@ class PresetStore:
             UPDATE presets
                SET name = ?, adapter_identifier = ?, adapter_mac = ?, adapter_name = ?,
                    mode = ?, ip_address = ?, subnet_mask = ?, gateway = ?,
-                   description = ?, updated_at = ?
+                   description = ?, folder = ?, updated_at = ?
              WHERE id = ?
             """,
             (
@@ -192,6 +226,7 @@ class PresetStore:
                 configuration.subnet_mask if not configuration.is_dhcp else "",
                 configuration.gateway if not configuration.is_dhcp else "",
                 description.strip(),
+                existing.folder if folder is None else clean_folder(folder),
                 _now(),
                 preset_id,
             ),
@@ -221,8 +256,9 @@ class PresetStore:
             """
             INSERT INTO presets
                 (name, adapter_identifier, adapter_mac, adapter_name, mode,
-                 ip_address, subnet_mask, gateway, description, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ip_address, subnet_mask, gateway, description, folder,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -234,6 +270,7 @@ class PresetStore:
                 source.subnet_mask,
                 source.gateway,
                 source.description,
+                source.folder,
                 now,
                 now,
             ),
@@ -242,6 +279,29 @@ class PresetStore:
         created = self.get(int(new_id))
         assert created is not None
         return created
+
+    def set_folder(self, preset_id: int, folder: str) -> None:
+        """Move one preset. An empty folder makes it ungrouped again."""
+        self.db.execute(
+            "UPDATE presets SET folder = ?, updated_at = ? WHERE id = ?",
+            (clean_folder(folder), _now(), preset_id),
+        )
+        log.info("Preset moved: id=%s folder=%r", preset_id, folder)
+
+    def rename_folder(self, old_name: str, new_name: str) -> int:
+        """Rename a folder across every preset in it. Returns rows affected."""
+        old_name = clean_folder(old_name)
+        new_name = clean_folder(new_name)
+        if not old_name:
+            raise StorageError("That folder no longer exists.")
+        moved = [p for p in self.list_all() if p.folder == old_name]
+        for preset in moved:
+            self.db.execute(
+                "UPDATE presets SET folder = ?, updated_at = ? WHERE id = ?",
+                (new_name, _now(), preset.id),
+            )
+        log.info("Folder renamed: %r -> %r (%d presets)", old_name, new_name, len(moved))
+        return len(moved)
 
     def delete(self, preset_id: int) -> None:
         self.db.execute("DELETE FROM presets WHERE id = ?", (preset_id,))
@@ -347,6 +407,7 @@ class PresetStore:
             adapter_mac = str(entry.get("adapter_mac", "") or "")
             adapter_name = str(entry.get("adapter_name", "") or "")
             description = str(entry.get("description", "") or "")
+            folder = clean_folder(str(entry.get("folder", "") or ""))
             now = _now()
 
             if existing is not None:
@@ -355,7 +416,7 @@ class PresetStore:
                     UPDATE presets
                        SET adapter_identifier = ?, adapter_mac = ?, adapter_name = ?,
                            mode = ?, ip_address = ?, subnet_mask = ?, gateway = ?,
-                           description = ?, updated_at = ?
+                           description = ?, folder = ?, updated_at = ?
                      WHERE id = ?
                     """,
                     (
@@ -367,6 +428,7 @@ class PresetStore:
                         configuration.subnet_mask if not configuration.is_dhcp else "",
                         configuration.gateway if not configuration.is_dhcp else "",
                         description,
+                        folder,
                         now,
                         existing.id,
                     ),
@@ -376,8 +438,9 @@ class PresetStore:
                     """
                     INSERT INTO presets
                         (name, adapter_identifier, adapter_mac, adapter_name, mode,
-                         ip_address, subnet_mask, gateway, description, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         ip_address, subnet_mask, gateway, description, folder,
+                         created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         name,
@@ -389,6 +452,7 @@ class PresetStore:
                         configuration.subnet_mask if not configuration.is_dhcp else "",
                         configuration.gateway if not configuration.is_dhcp else "",
                         description,
+                        folder,
                         now,
                         now,
                     ),

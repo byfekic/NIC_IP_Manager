@@ -36,6 +36,7 @@ from app.gui.dialogs import (
     DryRunDialog,
     EditPresetDialog,
     ErrorDialog,
+    FolderDialog,
     PresetDialog,
     ProgressDialog,
     RecoveryDialog,
@@ -167,6 +168,12 @@ class MainWindow(QMainWindow):
         self.preset_panel.deleteRequested.connect(self.delete_preset)
         self.preset_panel.importRequested.connect(self.import_presets)
         self.preset_panel.exportRequested.connect(self.export_presets)
+        self.preset_panel.moveRequested.connect(self.move_preset)
+        self.preset_panel.renameFolderRequested.connect(self.rename_folder)
+        self.preset_panel.collapsedFoldersChanged.connect(self._on_folders_collapsed)
+        self.preset_panel.set_collapsed_folders(
+            list(self.settings.get("collapsed_folders", []))
+        )
 
         self.history_panel = HistoryPanel(self.palette)
         self.history_panel.clearRequested.connect(self.clear_history)
@@ -359,6 +366,63 @@ class MainWindow(QMainWindow):
             entries = []
         self.preset_panel.set_presets(
             entries, self._adapters, self.adapter_panel.current_adapter
+        )
+
+    def _known_folders(self) -> list[str]:
+        """Folder names to offer in a picker. Never blocks on storage trouble."""
+        try:
+            return self.presets.folders()
+        except IPChangerError as exc:
+            log.warning("Folders unavailable: %s", exc.message)
+            return []
+
+    def _on_folders_collapsed(self, folders: list) -> None:
+        self.settings.set("collapsed_folders", list(folders))
+
+    def move_preset(self, preset_id: int) -> None:
+        preset = self.presets.get(preset_id)
+        if preset is None:
+            return
+        dialog = FolderDialog(
+            self,
+            "Move to folder",
+            f"Choose a folder for '{preset.name}', or clear the field to take "
+            "it out of its folder.",
+            folders=self._known_folders(),
+            folder=preset.folder,
+        )
+        if dialog.exec() != FolderDialog.Accepted:
+            return
+        try:
+            self.presets.set_folder(preset_id, dialog.folder)
+        except IPChangerError as exc:
+            self._show_error(exc.message, exc.detail, exc.technical)
+            return
+        self.refresh_presets()
+        where = f"'{dialog.folder}'" if dialog.folder else "no folder"
+        self.status_bar.showMessage(f"Moved '{preset.name}' to {where}", 5000)
+
+    def rename_folder(self, folder: str) -> None:
+        if not folder:
+            return
+        dialog = FolderDialog(
+            self,
+            "Rename folder",
+            f"Every configuration in '{folder}' moves with it. Clearing the "
+            "field takes them all out of the folder.",
+            folders=self._known_folders(),
+            folder=folder,
+        )
+        if dialog.exec() != FolderDialog.Accepted or dialog.folder == folder:
+            return
+        try:
+            moved = self.presets.rename_folder(folder, dialog.folder)
+        except IPChangerError as exc:
+            self._show_error(exc.message, exc.detail, exc.technical)
+            return
+        self.refresh_presets()
+        self.status_bar.showMessage(
+            f"Moved {moved} configuration(s) out of '{folder}'", 5000
         )
 
     def refresh_history(self) -> None:
@@ -570,7 +634,9 @@ class MainWindow(QMainWindow):
                 "Enter a valid IP address and subnet mask before saving.",
             )
             return
-        dialog = PresetDialog(self, self.palette, adapter, config)
+        dialog = PresetDialog(
+            self, self.palette, adapter, config, folders=self._known_folders()
+        )
         if dialog.exec() != PresetDialog.Accepted:
             return
         try:
@@ -579,6 +645,7 @@ class MainWindow(QMainWindow):
                 config,
                 adapter if dialog.remember_adapter else None,
                 dialog.preset_description,
+                folder=dialog.preset_folder,
             )
         except IPChangerError as exc:
             self._show_error(exc.message, exc.detail, exc.technical)
@@ -628,7 +695,13 @@ class MainWindow(QMainWindow):
         if preset is None:
             return
         dialog = EditPresetDialog(
-            self, self.palette, preset.name, preset.configuration, preset.description
+            self,
+            self.palette,
+            preset.name,
+            preset.configuration,
+            preset.description,
+            folders=self._known_folders(),
+            folder=preset.folder,
         )
         if dialog.exec() != EditPresetDialog.Accepted:
             return
@@ -639,6 +712,7 @@ class MainWindow(QMainWindow):
                 dialog.result_configuration,
                 description=dialog.preset_description,
                 keep_adapter=True,
+                folder=dialog.preset_folder,
             )
         except IPChangerError as exc:
             self._show_error(exc.message, exc.detail, exc.technical)
@@ -856,6 +930,7 @@ class MainWindow(QMainWindow):
             window_x=max(0, self.x()),
             window_y=max(0, self.y()),
             theme=self.palette_name,
+            collapsed_folders=self.preset_panel.collapsed_folders(),
         )
         self.settings.save()
         self.tasks.wait(3000)

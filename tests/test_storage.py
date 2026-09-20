@@ -375,12 +375,14 @@ def test_reopening_leaves_the_version_and_the_data_alone(tmp_path):
 def test_a_pending_migration_runs_and_preserves_existing_rows(tmp_path, monkeypatch):
     path = tmp_path / "upgrade.db"
     _seed(path)
+    # One past whatever ships today, so the test survives the next real bump.
+    nxt = db_module.SCHEMA_VERSION + 1
 
-    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 2)
-    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: _add_column("dns_servers")})
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", nxt)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {nxt: _add_column("dns_servers")})
 
     db = Database(path)
-    assert db.schema_version() == 2
+    assert db.schema_version() == nxt
     assert "dns_servers" in _columns(path, "presets")
     assert [p.name for p in PresetStore(db).list_all()] == ["PLC"]
     db.close()
@@ -400,12 +402,15 @@ def test_migrations_run_in_ascending_order(tmp_path, monkeypatch):
 
         return migration
 
-    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 4)
-    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: step(2), 3: step(3), 4: step(4)})
+    first = db_module.SCHEMA_VERSION + 1
+    versions = [first, first + 1, first + 2]
+
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", versions[-1])
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {v: step(v) for v in versions})
 
     db = Database(path)
-    assert order == [2, 3, 4]
-    assert db.schema_version() == 4
+    assert order == versions
+    assert db.schema_version() == versions[-1]
     db.close()
 
 
@@ -426,9 +431,10 @@ def test_a_missing_upgrade_step_is_refused_untouched(tmp_path, monkeypatch):
     _seed(path)
     baseline = _stored_version(path)
 
-    # Claims to need v3 but only knows how to reach v2.
-    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 3)
-    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: _add_column("dns_servers")})
+    # Claims to need two more versions but only knows how to reach the first.
+    nxt = db_module.SCHEMA_VERSION + 1
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", nxt + 1)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {nxt: _add_column("dns_servers")})
 
     with pytest.raises(StorageError):
         Database(path)
@@ -448,8 +454,9 @@ def test_a_failing_migration_is_rolled_back(tmp_path, monkeypatch):
         connection.execute("ALTER TABLE presets ADD COLUMN half_done TEXT DEFAULT ''")
         raise RuntimeError("migration exploded")
 
-    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 2)
-    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: broken})
+    nxt = db_module.SCHEMA_VERSION + 1
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", nxt)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {nxt: broken})
 
     with pytest.raises(StorageError):
         Database(path)
@@ -463,8 +470,9 @@ def test_the_database_is_copied_aside_before_migrating(tmp_path, monkeypatch):
     _seed(path)
     baseline = _stored_version(path)
 
-    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 2)
-    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: _add_column("dns_servers")})
+    nxt = db_module.SCHEMA_VERSION + 1
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", nxt)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {nxt: _add_column("dns_servers")})
 
     db = Database(path)
     db.close()
@@ -473,3 +481,119 @@ def test_the_database_is_copied_aside_before_migrating(tmp_path, monkeypatch):
     assert backup.exists()
     assert _stored_version(backup) == baseline
     assert "dns_servers" not in _columns(backup, "presets")
+
+
+# ---------------------------------------------------------------- folders
+def test_the_folder_column_survives_the_upgrade_from_v1(tmp_path):
+    """The real v2 migration, run against a database built at v1."""
+    path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(str(path))
+    connection.executescript(db_module._BASELINE)
+    connection.execute(f"PRAGMA user_version = {db_module._BASELINE_VERSION}")
+    connection.execute(
+        "INSERT INTO presets (name, mode, created_at, updated_at) "
+        "VALUES ('LEGACY', 'dhcp', '2026-01-01', '2026-01-01')"
+    )
+    connection.commit()
+    connection.close()
+
+    db = Database(path)
+    presets = PresetStore(db)
+    stored = presets.get_by_name("LEGACY")
+
+    assert db.schema_version() == db_module.SCHEMA_VERSION
+    assert stored is not None, "the existing preset must survive the upgrade"
+    assert stored.folder == "", "an upgraded preset is ungrouped, not broken"
+    db.close()
+
+
+def test_a_preset_can_be_created_in_a_folder(presets, adapter):
+    created = presets.create(
+        "PLC", IPConfiguration.dhcp(), adapter, folder="Line 3"
+    )
+    assert created.folder == "Line 3"
+    assert presets.folders() == ["Line 3"]
+
+
+def test_folder_names_are_normalised(presets, adapter):
+    created = presets.create(
+        "PLC", IPConfiguration.dhcp(), adapter, folder="  Line   3  "
+    )
+    assert created.folder == "Line 3"
+
+
+def test_a_preset_can_be_moved_between_folders_and_back_out(presets, adapter):
+    created = presets.create("PLC", IPConfiguration.dhcp(), adapter, folder="Line 3")
+
+    presets.set_folder(created.id, "Line 4")
+    assert presets.get(created.id).folder == "Line 4"
+
+    presets.set_folder(created.id, "")
+    assert presets.get(created.id).folder == ""
+    assert presets.folders() == [], "an emptied folder stops existing"
+
+
+def test_renaming_a_folder_moves_every_preset_in_it(presets, adapter):
+    presets.create("A", IPConfiguration.dhcp(), adapter, folder="Line 3")
+    presets.create("B", IPConfiguration.dhcp(), adapter, folder="Line 3")
+    presets.create("C", IPConfiguration.dhcp(), adapter, folder="Office")
+
+    moved = presets.rename_folder("Line 3", "Line 03")
+
+    assert moved == 2
+    assert presets.folders() == ["Line 03", "Office"]
+    assert presets.get_by_name("C").folder == "Office"
+
+
+def test_ungrouped_presets_are_listed_after_the_folders(presets, adapter):
+    presets.create("loose", IPConfiguration.dhcp(), adapter)
+    presets.create("in a folder", IPConfiguration.dhcp(), adapter, folder="Line 3")
+
+    assert [p.name for p in presets.list_all()] == ["in a folder", "loose"]
+    assert [folder for folder, _ in presets.grouped()] == ["Line 3", ""]
+
+
+def test_duplicating_a_preset_keeps_its_folder(presets, adapter):
+    created = presets.create("PLC", IPConfiguration.dhcp(), adapter, folder="Line 3")
+    copy = presets.duplicate(created.id)
+    assert copy.folder == "Line 3"
+
+
+def test_editing_a_preset_leaves_its_folder_alone_unless_asked(presets, adapter):
+    created = presets.create("PLC", IPConfiguration.dhcp(), adapter, folder="Line 3")
+
+    presets.update(created.id, "PLC", IPConfiguration.dhcp(), keep_adapter=True)
+    assert presets.get(created.id).folder == "Line 3"
+
+    presets.update(
+        created.id, "PLC", IPConfiguration.dhcp(), keep_adapter=True, folder="Office"
+    )
+    assert presets.get(created.id).folder == "Office"
+
+
+def test_folders_survive_an_export_import_roundtrip(presets, adapter, tmp_path, database):
+    presets.create("PLC", IPConfiguration.dhcp(), adapter, folder="Line 3")
+    path = tmp_path / "presets.json"
+    presets.export_to_file(path)
+
+    fresh = PresetStore(Database(tmp_path / "other.db"))
+    imported, _skipped, _problems = fresh.import_from_file(path)
+
+    assert imported == 1
+    assert fresh.get_by_name("PLC").folder == "Line 3"
+
+
+def test_a_preset_file_without_folders_still_imports(presets, tmp_path):
+    """Files written before folders existed must keep working."""
+    path = tmp_path / "old.json"
+    path.write_text(
+        json.dumps(
+            {"version": 1, "presets": [{"name": "OLD", "mode": "dhcp"}]}
+        ),
+        encoding="utf-8",
+    )
+
+    imported, _skipped, _problems = presets.import_from_file(path)
+
+    assert imported == 1
+    assert presets.get_by_name("OLD").folder == ""

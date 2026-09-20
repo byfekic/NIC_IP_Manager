@@ -405,6 +405,27 @@ QPushButton#IconButton:hover {{
     color: {p.text};
 }}
 
+/* --------------------------------------------------------- folder rows */
+QFrame#FolderHeader {{
+    background: transparent;
+    border: none;
+}}
+
+QPushButton#FolderToggle {{
+    background: transparent;
+    border: none;
+    padding: 4px 2px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: {p.text_muted};
+    text-align: left;
+}}
+
+QPushButton#FolderToggle:hover {{
+    color: {p.accent};
+}}
+
 /* ------------------------------------------------------- radio buttons */
 QRadioButton {{
     spacing: 10px;

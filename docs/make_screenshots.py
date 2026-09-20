@@ -104,6 +104,7 @@ from app.gui.dialogs import (
     AboutDialog,
     ConfirmDialog,
     DryRunDialog,
+    FolderDialog,
     PresetDialog,
     ResultDialog,
 )
@@ -138,18 +139,21 @@ presets.create(
     IPConfiguration.static("192.168.10.10", "255.255.255.0", "192.168.10.1"),
     adapter=eth,
     description="Siemens S7-1500, line 3 control cabinet",
+    folder="Line 3",
 )
 presets.create(
     "VISION RIG",
     IPConfiguration.static("192.168.1.100", "255.255.255.0"),
     adapter=eth,
     description="GigE machine-vision camera, isolated segment",
+    folder="Line 3",
 )
 presets.create(
     "DRIVE COMMISSIONING",
     IPConfiguration.static("10.10.10.5", "255.255.255.0", "10.10.10.1"),
     adapter=eth,
     description="Servo drive start-up subnet",
+    folder="Line 7",
 )
 presets.create(
     "OFFICE (DHCP)",
@@ -310,6 +314,8 @@ def s08_save_preset():
         configuration=IPConfiguration.static("192.168.10.10", "255.255.255.0", "192.168.10.1"),
         name="PLC NETWORK",
         description="Siemens S7-1500, line 3 control cabinet",
+        folders=presets.folders(),
+        folder="Line 3",
     )
     dialog.show()
     save(dialog, "08-save-preset.png")
@@ -354,6 +360,32 @@ def s10_about():
     )
     dialog.show()
     save(dialog, "10-about.png")
+    dialog.close()
+
+
+@step
+def s11b_folders_collapsed():
+    window.apply_theme("dark")
+    window.side_tabs.setCurrentIndex(0)
+    window.preset_panel.set_collapsed_folders(["Line 7"])
+    window.refresh_presets()
+    save(window, "12-folders-collapsed-dark.png")
+    window.preset_panel.set_collapsed_folders([])
+    window.refresh_presets()
+
+
+@step
+def s11c_move_to_folder():
+    dialog = FolderDialog(
+        window,
+        "Move to folder",
+        "Choose a folder for 'VISION RIG', or clear the field to take it out "
+        "of its folder.",
+        folders=presets.folders(),
+        folder="Line 3",
+    )
+    dialog.show()
+    save(dialog, "13-move-to-folder.png")
     dialog.close()
 
 

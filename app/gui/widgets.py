@@ -33,6 +33,8 @@ ICON_REFRESH = "↻"   # clockwise open circle arrow
 ICON_MENU = "⋮"      # vertical ellipsis
 ICON_ARROW = "→"     # rightwards arrow
 ICON_RESTORE = "↺"   # anticlockwise open circle arrow
+ICON_EXPANDED = "▾"  # black down-pointing small triangle
+ICON_COLLAPSED = "▸" # black right-pointing small triangle
 
 
 class Card(QFrame):
