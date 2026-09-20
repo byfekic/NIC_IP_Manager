@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
 from app.models.configuration import ConfigMode, IPConfiguration
-from app.storage.presets import resolve_preset_adapter
+from app.storage import database as db_module
+from app.storage.database import Database
+from app.storage.presets import PresetStore, resolve_preset_adapter
 from app.utils.errors import StorageError
 from tests.conftest import make_adapter
 
@@ -310,3 +313,163 @@ def test_settings_ignore_unknown_and_mistyped_keys(tmp_path):
     settings = Settings(path)
     assert settings.get("theme") == "dark"        # wrong type ignored
     assert settings.get("window_width") == 900    # valid value kept
+
+
+# ------------------------------------------------------------ schema migration
+def _columns(path, table):
+    connection = sqlite3.connect(str(path))
+    try:
+        return {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+    finally:
+        connection.close()
+
+
+def _stored_version(path):
+    connection = sqlite3.connect(str(path))
+    try:
+        return int(connection.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        connection.close()
+
+
+def _set_stored_version(path, version):
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.execute(f"PRAGMA user_version = {int(version)}")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _seed(path):
+    """Create a database at the current schema with one preset in it."""
+    db = Database(path)
+    PresetStore(db).create("PLC", IPConfiguration.dhcp(), make_adapter())
+    db.close()
+
+
+def _add_column(name):
+    def migration(connection):
+        connection.execute(
+            f"ALTER TABLE presets ADD COLUMN {name} TEXT NOT NULL DEFAULT ''"
+        )
+
+    return migration
+
+
+def test_a_new_database_records_the_current_schema_version(tmp_path):
+    db = Database(tmp_path / "new.db")
+    assert db.schema_version() == db_module.SCHEMA_VERSION
+    db.close()
+
+
+def test_reopening_leaves_the_version_and_the_data_alone(tmp_path):
+    path = tmp_path / "reopen.db"
+    _seed(path)
+    db = Database(path)
+    assert db.schema_version() == db_module.SCHEMA_VERSION
+    assert [p.name for p in PresetStore(db).list_all()] == ["PLC"]
+    db.close()
+
+
+def test_a_pending_migration_runs_and_preserves_existing_rows(tmp_path, monkeypatch):
+    path = tmp_path / "upgrade.db"
+    _seed(path)
+
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 2)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: _add_column("dns_servers")})
+
+    db = Database(path)
+    assert db.schema_version() == 2
+    assert "dns_servers" in _columns(path, "presets")
+    assert [p.name for p in PresetStore(db).list_all()] == ["PLC"]
+    db.close()
+
+
+def test_migrations_run_in_ascending_order(tmp_path, monkeypatch):
+    path = tmp_path / "ordered.db"
+    _seed(path)
+    order = []
+
+    def step(version):
+        def migration(connection):
+            order.append(version)
+            connection.execute(
+                f"ALTER TABLE presets ADD COLUMN extra_{version} TEXT DEFAULT ''"
+            )
+
+        return migration
+
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 4)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: step(2), 3: step(3), 4: step(4)})
+
+    db = Database(path)
+    assert order == [2, 3, 4]
+    assert db.schema_version() == 4
+    db.close()
+
+
+def test_a_database_from_a_newer_build_is_refused_untouched(tmp_path):
+    path = tmp_path / "newer.db"
+    _seed(path)
+    _set_stored_version(path, 99)
+
+    with pytest.raises(StorageError) as excinfo:
+        Database(path)
+
+    assert "newer version" in excinfo.value.message
+    assert _stored_version(path) == 99
+
+
+def test_a_missing_upgrade_step_is_refused_untouched(tmp_path, monkeypatch):
+    path = tmp_path / "gap.db"
+    _seed(path)
+    baseline = _stored_version(path)
+
+    # Claims to need v3 but only knows how to reach v2.
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 3)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: _add_column("dns_servers")})
+
+    with pytest.raises(StorageError):
+        Database(path)
+
+    assert _stored_version(path) == baseline
+    assert "dns_servers" not in _columns(path, "presets")
+
+
+def test_a_failing_migration_is_rolled_back(tmp_path, monkeypatch):
+    path = tmp_path / "failing.db"
+    _seed(path)
+    baseline = _stored_version(path)
+
+    def broken(connection):
+        # The schema change lands first, so this proves the whole step is
+        # undone rather than just the statement that raised.
+        connection.execute("ALTER TABLE presets ADD COLUMN half_done TEXT DEFAULT ''")
+        raise RuntimeError("migration exploded")
+
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 2)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: broken})
+
+    with pytest.raises(StorageError):
+        Database(path)
+
+    assert _stored_version(path) == baseline
+    assert "half_done" not in _columns(path, "presets")
+
+
+def test_the_database_is_copied_aside_before_migrating(tmp_path, monkeypatch):
+    path = tmp_path / "copied.db"
+    _seed(path)
+    baseline = _stored_version(path)
+
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 2)
+    monkeypatch.setattr(db_module, "_MIGRATIONS", {2: _add_column("dns_servers")})
+
+    db = Database(path)
+    db.close()
+
+    backup = tmp_path / f"copied.db.v{baseline}.bak"
+    assert backup.exists()
+    assert _stored_version(backup) == baseline
+    assert "dns_servers" not in _columns(backup, "presets")
