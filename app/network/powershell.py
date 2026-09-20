@@ -16,6 +16,10 @@ Every configuration change runs through this module. The design constraints:
 * Results come back as a single JSON envelope, so nothing depends on parsing
   localized human-readable output.
 * Every call has a timeout and a validated exit code.
+* The mutating operations report success and their steps, but not the
+  resulting state: the caller re-reads the adapter through the IP Helper
+  API in about four milliseconds, where the CIM queries behind
+  Get-Ipv4State cost a few hundred.
 """
 
 from __future__ import annotations
@@ -231,7 +235,7 @@ try {
                 Clear-DefaultRoutes $idx
                 Set-StaticViaWmi $idx $allAddresses $allMasks $p.gateway
                 Step ('Assigned ' + [string]$p.ipAddress + '/' + [string]$p.subnetMask)
-                Emit $true '' '' (Get-Ipv4State $idx)
+                Emit $true '' '' $null
                 break
             }
 
@@ -252,7 +256,7 @@ try {
                 Clear-Ipv4Addresses $idx
                 Clear-DefaultRoutes $idx
                 Set-StaticViaWmi $idx $allAddresses $allMasks $p.gateway
-                Emit $true '' '' (Get-Ipv4State $idx)
+                Emit $true '' '' $null
                 break
             }
 
@@ -267,7 +271,7 @@ try {
                 }
             }
 
-            Emit $true '' '' (Get-Ipv4State $idx)
+            Emit $true '' '' $null
         }
 
         'set_dhcp' {
@@ -298,7 +302,7 @@ try {
                 Step 'Lease request deferred (adapter not ready)'
             }
 
-            Emit $true '' '' (Get-Ipv4State $idx)
+            Emit $true '' '' $null
         }
 
         'restore' {
@@ -358,7 +362,7 @@ try {
                     }
                 }
             }
-            Emit $true '' '' (Get-Ipv4State $idx)
+            Emit $true '' '' $null
         }
 
         default {

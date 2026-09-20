@@ -8,13 +8,18 @@ back (specification sections 13, 14, 39, 55).
 
 from __future__ import annotations
 
+import time
+
 from app.models.configuration import (
     ConfigurationSnapshot,
     IPConfiguration,
     ResultStatus,
 )
+from app.network import ip_manager as ip_manager_module
 from app.network.ip_manager import NetworkManager
 from app.network.verifier import (
+    ConflictResult,
+    ConflictStatus,
     verify_configuration,
 )
 from tests.conftest import FakeAdapterManager, FakeRunner, make_adapter
@@ -27,10 +32,9 @@ def build(states, runner=None, journal=None):
         runner=runner or FakeRunner(),
         journal=journal,
     )
-    manager.STATIC_SETTLE_SECONDS = 0
-    manager.DHCP_SETTLE_SECONDS = 0
-    manager.DHCP_POLL_INTERVAL = 0
-    manager.DHCP_POLL_ATTEMPTS = 2
+    manager.STATIC_SETTLE_TIMEOUT = 0
+    manager.DHCP_SETTLE_TIMEOUT = 0
+    manager.SETTLE_POLL_INTERVAL = 0
     return manager
 
 
@@ -387,3 +391,109 @@ def test_verify_dhcp_requires_dhcp_mode():
 
     dhcp_adapter = make_adapter(dhcp=True)
     assert verify_configuration(dhcp_adapter, IPConfiguration.dhcp()).verified
+
+
+# ------------------------------------------------------------------- latency
+# Windows is mocked, so these assert the shape of the waiting rather than real
+# durations: that the engine stops waiting as soon as the change is visible,
+# and that the conflict probe overlaps the change instead of following it.
+def _settling_manager(states, static_timeout=5.0):
+    manager = NetworkManager(
+        adapter_manager=FakeAdapterManager(states), runner=FakeRunner()
+    )
+    manager.STATIC_SETTLE_TIMEOUT = static_timeout
+    manager.SETTLE_POLL_INTERVAL = 0.01
+    return manager
+
+
+def test_settle_returns_as_soon_as_the_change_is_visible():
+    pending = make_adapter()
+    applied = make_adapter(ipv4=(("10.0.0.5", 24),), gateways=("10.0.0.1",))
+    manager = _settling_manager([pending, pending, applied])
+
+    start = time.perf_counter()
+    result = manager._settle(
+        pending,
+        IPConfiguration.static("10.0.0.5", "255.255.255.0", "10.0.0.1"),
+        lambda _text: None,
+    )
+    elapsed = time.perf_counter() - start
+
+    assert result is applied
+    assert elapsed < 1.0, "waited for the cap instead of stopping at the change"
+
+
+def test_settle_gives_up_at_the_cap_and_returns_what_it_last_saw():
+    """A change that never appears must not hang, and must not be hidden."""
+    pending = make_adapter()
+    manager = _settling_manager([pending], static_timeout=0.2)
+
+    start = time.perf_counter()
+    result = manager._settle(
+        pending, IPConfiguration.static("10.0.0.5", "255.255.255.0"), lambda _text: None
+    )
+    elapsed = time.perf_counter() - start
+
+    # Returned rather than raised: verify_configuration decides what it means.
+    assert result is pending
+    assert 0.15 < elapsed < 2.0
+
+
+def test_settle_waits_for_a_real_dhcp_lease_not_an_apipa_address():
+    apipa = make_adapter(dhcp=True, ipv4=(("169.254.3.4", 16),), gateways=())
+    leased = make_adapter(dhcp=True, ipv4=(("10.0.0.55", 24),), gateways=("10.0.0.1",))
+    manager = _settling_manager([apipa, apipa, leased])
+    manager.DHCP_SETTLE_TIMEOUT = 5.0
+
+    result = manager._settle(apipa, IPConfiguration.dhcp(), lambda _text: None)
+
+    assert result is leased
+
+
+def test_the_conflict_probe_runs_alongside_the_change(monkeypatch, journal):
+    """The ARP probe takes about three seconds; it must not be added on top."""
+    before = make_adapter()
+    after = make_adapter(ipv4=(("10.0.0.5", 24),), gateways=())
+
+    def slow_probe(ip_address, own_macs=None):
+        time.sleep(0.4)
+        return ConflictResult(ConflictStatus.NO_CONFLICT)
+
+    monkeypatch.setattr(ip_manager_module, "check_ip_conflict", slow_probe)
+
+    class SlowRunner(FakeRunner):
+        def run(self, op, timeout=None, **params):
+            time.sleep(0.4)
+            return super().run(op, timeout=timeout, **params)
+
+    manager = build([before, after], SlowRunner(), journal)
+
+    start = time.perf_counter()
+    result = manager.apply_configuration(
+        before, IPConfiguration.static("10.0.0.5", "255.255.255.0")
+    )
+    elapsed = time.perf_counter() - start
+
+    assert result.status is ResultStatus.SUCCESS
+    assert "No conflict" in result.conflict, "the probe result must still be reported"
+    assert elapsed < 0.7, f"probe ran after the change, not alongside it ({elapsed:.2f}s)"
+
+
+def test_a_probe_that_never_answers_does_not_block_the_result(monkeypatch, journal):
+    before = make_adapter()
+    after = make_adapter(ipv4=(("10.0.0.5", 24),), gateways=())
+
+    def hanging_probe(ip_address, own_macs=None):
+        time.sleep(30)
+
+    monkeypatch.setattr(ip_manager_module, "check_ip_conflict", hanging_probe)
+
+    manager = build([before, after], FakeRunner(), journal)
+    manager.CONFLICT_PROBE_TIMEOUT = 0.1
+
+    result = manager.apply_configuration(
+        before, IPConfiguration.static("10.0.0.5", "255.255.255.0")
+    )
+
+    assert result.status is ResultStatus.SUCCESS
+    assert "Unable to determine" in result.conflict

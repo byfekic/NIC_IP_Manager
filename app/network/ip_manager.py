@@ -11,6 +11,7 @@ The GUI never executes PowerShell or netsh itself; it only calls this class.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Callable, Optional
 
@@ -27,6 +28,7 @@ from app.network.adapter_manager import AdapterManager
 from app.network.powershell import PowerShellRunner, translate_error
 from app.network.validator import validate
 from app.network.verifier import (
+    ConflictResult,
     ConflictStatus,
     check_ip_conflict,
     verify_configuration,
@@ -40,14 +42,56 @@ log = get_logger(__name__)
 ProgressCallback = Optional[Callable[[str], None]]
 
 
+class _ConflictProbe:
+    """Runs the ARP probe alongside the change instead of after it.
+
+    SendARP takes about three seconds to conclude that nobody answered, and
+    nobody answering is the ordinary, good case - so running it in sequence
+    cost more than the change itself. Started before the address is assigned
+    it also answers the more meaningful question: a reply then is certainly
+    another device rather than this machine.
+    """
+
+    def __init__(self, ip_address: str, own_macs: set[str]) -> None:
+        self._result: Optional[ConflictResult] = None
+        self._thread = threading.Thread(
+            target=self._run, args=(ip_address, own_macs), daemon=True
+        )
+
+    def start(self) -> "_ConflictProbe":
+        self._thread.start()
+        return self
+
+    def _run(self, ip_address: str, own_macs: set[str]) -> None:
+        try:
+            self._result = check_ip_conflict(ip_address, own_macs=own_macs)
+        except Exception:  # informational only; never fail the operation
+            log.exception("Address conflict probe failed")
+
+    def result(self, timeout: float) -> ConflictResult:
+        self._thread.join(timeout)
+        if self._result is None:
+            return ConflictResult(
+                ConflictStatus.UNKNOWN,
+                detail="The conflict check did not finish in time.",
+            )
+        return self._result
+
+
 class NetworkManager:
     """Applies, verifies and rolls back IPv4 configurations."""
 
-    # How long to let Windows settle before re-reading the adapter.
-    STATIC_SETTLE_SECONDS = 1.5
-    DHCP_SETTLE_SECONDS = 3.0
-    DHCP_POLL_ATTEMPTS = 6
-    DHCP_POLL_INTERVAL = 2.0
+    # Caps, not costs. Windows applies a change asynchronously, so the adapter
+    # is re-read until it shows what was asked for instead of sleeping for a
+    # fixed period: a static address is normally visible within a few tens of
+    # milliseconds, and always waiting 1.5s for it made every change feel slow.
+    STATIC_SETTLE_TIMEOUT = 2.0
+    DHCP_SETTLE_TIMEOUT = 15.0
+    SETTLE_POLL_INTERVAL = 0.05
+
+    # Backstop for the conflict probe, which has normally finished by the time
+    # the change has been applied and verified.
+    CONFLICT_PROBE_TIMEOUT = 6.0
 
     def __init__(
         self,
@@ -171,6 +215,13 @@ class NetworkManager:
         steps.append(f"Snapshot: {snapshot.describe()}")
         self.journal.begin(adapter.friendly_name, adapter.guid, config, snapshot)
 
+        # -- CONFLICT PROBE: started here so its three seconds overlap the
+        # change rather than being added to it.
+        probe: Optional[_ConflictProbe] = None
+        if check_conflict and not config.is_dhcp:
+            own = {a.mac for a in self.adapters.list_adapters(include_loopback=True) if a.mac}
+            probe = _ConflictProbe(config.ip_address, own).start()
+
         try:
             # -- APPLY
             if config.is_dhcp:
@@ -270,10 +321,9 @@ class NetworkManager:
 
             # -- CONFLICT CHECK (informational only; never fails the operation)
             conflict_text = ""
-            if check_conflict and not config.is_dhcp:
+            if probe is not None:
                 step("Checking for an address conflict")
-                own = {a.mac for a in self.adapters.list_adapters(include_loopback=True) if a.mac}
-                conflict = check_ip_conflict(config.ip_address, own_macs=own)
+                conflict = probe.result(self.CONFLICT_PROBE_TIMEOUT)
                 conflict_text = conflict.describe()
                 steps.append(conflict_text)
                 if conflict.status is ConflictStatus.CONFLICT:
@@ -333,24 +383,54 @@ class NetworkManager:
     def _settle(
         self, adapter: Adapter, config: IPConfiguration, step: Callable[[str], None]
     ) -> Optional[Adapter]:
-        """Give Windows time to apply the change, then re-read the adapter."""
-        if config.is_dhcp:
-            time.sleep(self.DHCP_SETTLE_SECONDS)
-            # A DHCP lease can take a few seconds; poll rather than assume.
-            for attempt in range(self.DHCP_POLL_ATTEMPTS):
-                current = self.adapters.refresh(adapter)
-                if current is None:
-                    return None
-                primary = current.primary_ipv4
-                if current.effective_dhcp and primary is not None and not primary.is_apipa:
-                    return current
-                if attempt < self.DHCP_POLL_ATTEMPTS - 1:
-                    step(f"Waiting for a DHCP address ({attempt + 1})")
-                    time.sleep(self.DHCP_POLL_INTERVAL)
-            return self.adapters.refresh(adapter)
+        """Re-read the adapter until it shows the change, or the cap is reached.
 
-        time.sleep(self.STATIC_SETTLE_SECONDS)
-        return self.adapters.refresh(adapter)
+        Returns the last state read even when it never matched: deciding what
+        that means is verify_configuration's job, not this one's.
+        """
+        timeout = self.DHCP_SETTLE_TIMEOUT if config.is_dhcp else self.STATIC_SETTLE_TIMEOUT
+        deadline = time.monotonic() + timeout
+        announced = False
+
+        while True:
+            current = self.adapters.refresh(adapter)
+            if current is None:
+                return None
+            if self._looks_applied(current, config):
+                return current
+            if time.monotonic() >= deadline:
+                log.info(
+                    "%s did not show the requested configuration within %ss",
+                    adapter.friendly_name,
+                    timeout,
+                )
+                return current
+            if config.is_dhcp and not announced:
+                step("Waiting for a DHCP address")
+                announced = True
+            time.sleep(self.SETTLE_POLL_INTERVAL)
+
+    @staticmethod
+    def _looks_applied(adapter: Adapter, config: IPConfiguration) -> bool:
+        """Cheap "has Windows finished?" test for the settle loop.
+
+        Deliberately weaker than verify_configuration, which runs immediately
+        afterwards and has the last word. This only decides when to stop
+        waiting, so it stays a subset and cannot disagree with the verdict.
+        """
+        if config.is_dhcp:
+            primary = adapter.primary_ipv4
+            return adapter.effective_dhcp and primary is not None and not primary.is_apipa
+        # Mirrors the conditions verify_configuration treats as a mismatch, so
+        # the loop never stops one moment before the verdict would pass.
+        if adapter.effective_dhcp and adapter.oper_status.is_up:
+            return False
+        if not any(
+            a.address == config.ip_address and a.prefix_length == config.prefix_length
+            for a in adapter.ipv4
+        ):
+            return False
+        return not config.gateway or config.gateway in adapter.ipv4_gateways
 
     # ------------------------------------------------------------ rollback
     def restore_configuration(
@@ -406,9 +486,9 @@ class NetworkManager:
                 steps=ps_result.steps,
             )
 
+        expected = self._snapshot_as_configuration(snapshot)
         step("Verifying the restored configuration")
-        time.sleep(self.STATIC_SETTLE_SECONDS)
-        restored = self.adapters.refresh(adapter)
+        restored = self._settle(adapter, expected, step)
         if restored is None:
             return OperationResult(
                 status=ResultStatus.ROLLBACK_FAILED,
@@ -418,7 +498,6 @@ class NetworkManager:
                 steps=ps_result.steps,
             )
 
-        expected = self._snapshot_as_configuration(snapshot)
         outcome = verify_configuration(restored, expected)
         self.journal.complete()
 
