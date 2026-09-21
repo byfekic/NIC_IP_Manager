@@ -26,8 +26,8 @@ os.environ["LOCALAPPDATA"] = str(APPDATA)
 OUT.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(PROJECT))
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer
+from PySide6.QtGui import QDragEnterEvent, QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.models.adapter import Adapter, IPv4Address, OperStatus
@@ -387,6 +387,34 @@ def s11c_move_to_folder():
     dialog.show()
     save(dialog, "13-move-to-folder.png")
     dialog.close()
+
+
+@step
+def s11d_drop_target():
+    """Show a folder highlighted as a drag hovers over it."""
+    from app.gui.preset_panel import PRESET_MIME, FolderSection
+
+    window.apply_theme("dark")
+    window.side_tabs.setCurrentIndex(0)
+
+    # QDragEnterEvent keeps a bare pointer to its payload, so the QMimeData
+    # has to outlive the call.
+    global _drag_payload
+    _drag_payload = QMimeData()
+    _drag_payload.setData(PRESET_MIME, b"1")
+
+    for section in window.preset_panel.findChildren(FolderSection):
+        if section.folder == "Line 7":
+            section.dragEnterEvent(
+                QDragEnterEvent(
+                    QPoint(10, 10),
+                    Qt.MoveAction,
+                    _drag_payload,
+                    Qt.LeftButton,
+                    Qt.NoModifier,
+                )
+            )
+    save(window, "14-drag-drop-target.png")
 
 
 @step

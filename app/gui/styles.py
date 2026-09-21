@@ -406,6 +406,19 @@ QPushButton#IconButton:hover {{
 }}
 
 /* --------------------------------------------------------- folder rows */
+/* The border is always drawn and merely changes colour, so highlighting a
+   drop target cannot shift the cards inside it. */
+QFrame#FolderSection {{
+    background: transparent;
+    border: 1px dashed transparent;
+    border-radius: 10px;
+}}
+
+QFrame#FolderSection[dropTarget="true"] {{
+    border: 1px dashed {p.accent};
+    background-color: {p.surface};
+}}
+
 QFrame#FolderHeader {{
     background: transparent;
     border: none;

@@ -170,6 +170,7 @@ class MainWindow(QMainWindow):
         self.preset_panel.exportRequested.connect(self.export_presets)
         self.preset_panel.moveRequested.connect(self.move_preset)
         self.preset_panel.renameFolderRequested.connect(self.rename_folder)
+        self.preset_panel.presetDropped.connect(self.drop_preset_into_folder)
         self.preset_panel.collapsedFoldersChanged.connect(self._on_folders_collapsed)
         self.preset_panel.set_collapsed_folders(
             list(self.settings.get("collapsed_folders", []))
@@ -400,6 +401,20 @@ class MainWindow(QMainWindow):
             return
         self.refresh_presets()
         where = f"'{dialog.folder}'" if dialog.folder else "no folder"
+        self.status_bar.showMessage(f"Moved '{preset.name}' to {where}", 5000)
+
+    def drop_preset_into_folder(self, preset_id: int, folder: str) -> None:
+        """Handle a preset dragged onto a folder."""
+        preset = self.presets.get(preset_id)
+        if preset is None or preset.folder == folder:
+            return
+        try:
+            self.presets.set_folder(preset_id, folder)
+        except IPChangerError as exc:
+            self._show_error(exc.message, exc.detail, exc.technical)
+            return
+        self.refresh_presets()
+        where = f"'{folder}'" if folder else "no folder"
         self.status_bar.showMessage(f"Moved '{preset.name}' to {where}", 5000)
 
     def rename_folder(self, folder: str) -> None:

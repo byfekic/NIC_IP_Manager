@@ -6,6 +6,7 @@ tests must never change the configuration of the machine they run on.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -106,6 +107,20 @@ class FakeRunner:
     @property
     def operations(self) -> list[str]:
         return [op for op, _ in self.calls]
+
+
+@pytest.fixture(scope="session")
+def qt_app():
+    """One offscreen QApplication for the whole run.
+
+    Qt refuses more than one per process, and the offscreen platform lets the
+    real widgets be built on a machine with no desktop - a CI runner included.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    yield app
 
 
 @pytest.fixture

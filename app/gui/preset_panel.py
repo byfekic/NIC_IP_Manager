@@ -4,14 +4,20 @@ Presets carry an optional folder name, and the list groups them under
 collapsible headers. Folders are labels rather than paths: one level, no
 nesting, which is what a technician organising by line or by customer needs
 and keeps the panel readable on a laptop screen.
+
+A preset can be dragged onto another folder to move it. Each group is its own
+widget so the whole group, not only its heading, is a drop target; dropping on
+"Ungrouped" takes a preset out of its folder again.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QMimeData, Qt, Signal
+from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -38,6 +44,22 @@ from app.storage.presets import Preset
 # empty string for "no folder", so it doubles as the sentinel here.
 UNGROUPED = ""
 
+# Private to this application: a drag carries only a preset id, and the drop
+# target reads the folder from itself. Nothing is moved by the drag itself.
+PRESET_MIME = "application/x-ip-changer-preset"
+
+
+def encode_preset_id(preset_id: int) -> bytes:
+    return str(int(preset_id)).encode("ascii")
+
+
+def decode_preset_id(payload: bytes) -> Optional[int]:
+    """Read a preset id from drag payload, tolerating anything unexpected."""
+    try:
+        return int(bytes(payload).decode("ascii"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+
 
 class PresetCard(QFrame):
     """One saved configuration, with Apply and an overflow menu."""
@@ -62,6 +84,8 @@ class PresetCard(QFrame):
         self.setObjectName("CardFlat")
         self.preset = preset
         self._palette = palette
+        self._press_position = None
+        self.setToolTip("Drag onto a folder to move this configuration")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
@@ -133,6 +157,38 @@ class PresetCard(QFrame):
         actions.addWidget(menu_button)
         layout.addLayout(actions)
 
+    # ---------------------------------------------------------------- drag
+    # The buttons inside the card consume their own presses, so a drag can
+    # only ever begin on the card's own surface.
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._press_position = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._press_position = None
+        super().mouseReleaseEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._press_position is None or not (event.buttons() & Qt.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        travelled = (event.position().toPoint() - self._press_position).manhattanLength()
+        if travelled < QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+
+        mime = QMimeData()
+        mime.setData(PRESET_MIME, encode_preset_id(self.preset.id))
+
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        preview = self.grab()
+        if not preview.isNull():
+            drag.setPixmap(preview.scaledToWidth(240, Qt.SmoothTransformation))
+        drag.exec(Qt.MoveAction)
+        self._press_position = None
+
     def _show_menu(self, anchor: QWidget) -> None:
         menu = QMenu(self)
         menu.addAction("Edit", lambda: self.editRequested.emit(self.preset.id))
@@ -189,6 +245,65 @@ class FolderHeader(QFrame):
         menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
 
 
+class FolderSection(QFrame):
+    """One folder's heading and cards, and the drop target for both.
+
+    Wrapping the group makes the whole block accept a drop rather than just
+    the heading, which is the difference between a drag that feels reliable
+    and one that keeps missing.
+    """
+
+    presetDropped = Signal(int, str)
+
+    def __init__(self, folder: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("FolderSection")
+        self.folder = folder
+        self.setAcceptDrops(True)
+        self._set_highlighted(False)
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(4, 2, 4, 2)
+        self._layout.setSpacing(10)
+
+    def add(self, widget: QWidget) -> None:
+        self._layout.addWidget(widget)
+
+    # ---------------------------------------------------------------- drop
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasFormat(PRESET_MIME):
+            event.acceptProposedAction()
+            self._set_highlighted(True)
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasFormat(PRESET_MIME):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:
+        self._set_highlighted(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        self._set_highlighted(False)
+        preset_id = decode_preset_id(event.mimeData().data(PRESET_MIME).data())
+        if preset_id is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self.presetDropped.emit(preset_id, self.folder)
+
+    def _set_highlighted(self, on: bool) -> None:
+        # The border is always drawn, transparent when idle, so highlighting
+        # cannot nudge the layout.
+        self.setProperty("dropTarget", "true" if on else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
 class PresetPanel(QWidget):
     """Scrollable list of saved configurations plus import/export."""
 
@@ -199,6 +314,7 @@ class PresetPanel(QWidget):
     deleteRequested = Signal(int)
     loadRequested = Signal(int)
     moveRequested = Signal(int)
+    presetDropped = Signal(int, str)
     renameFolderRequested = Signal(str)
     collapsedFoldersChanged = Signal(list)
     importRequested = Signal()
@@ -241,7 +357,7 @@ class PresetPanel(QWidget):
         self.container = QWidget()
         self.list_layout = QVBoxLayout(self.container)
         self.list_layout.setContentsMargins(0, 0, 6, 0)
-        self.list_layout.setSpacing(10)
+        self.list_layout.setSpacing(6)
         self.list_layout.addStretch(1)
         self.scroll.setWidget(self.container)
         root.addWidget(self.scroll, 1)
@@ -305,9 +421,12 @@ class PresetPanel(QWidget):
         # before: a plain list, with no "Ungrouped" heading above it.
         has_folders = any(folder for folder, _ in groups)
 
-        index = 0
-        for folder, entries in groups:
-            if folder or has_folders:
+        for index, (folder, entries) in enumerate(groups):
+            section = FolderSection(folder)
+            section.presetDropped.connect(self.presetDropped.emit)
+
+            titled = bool(folder) or has_folders
+            if titled:
                 header = FolderHeader(
                     folder,
                     folder or "Ungrouped",
@@ -317,14 +436,13 @@ class PresetPanel(QWidget):
                 )
                 header.toggled.connect(self._toggle_folder)
                 header.renameRequested.connect(self.renameFolderRequested.emit)
-                self.list_layout.insertWidget(index, header)
-                index += 1
-                if folder in self._collapsed:
-                    continue
+                section.add(header)
 
-            for preset in entries:
-                self.list_layout.insertWidget(index, self._build_card(preset, adapters, current_adapter))
-                index += 1
+            if not (titled and folder in self._collapsed):
+                for preset in entries:
+                    section.add(self._build_card(preset, adapters, current_adapter))
+
+            self.list_layout.insertWidget(index, section)
 
     def _build_card(
         self,

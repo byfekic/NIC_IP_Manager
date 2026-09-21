@@ -29,6 +29,7 @@ python docs/make_screenshots.py . docs/screenshots .screenshot-tmp
 | `11-history-light.png` | History tab, light theme. |
 | `12-folders-collapsed-dark.png` | The same list with a folder collapsed. Folders are one level deep; presets with no folder fall under **Ungrouped**, which only appears once at least one folder exists. |
 | `13-move-to-folder.png` | Moving a saved configuration between folders. The field offers the folders already in use and accepts a new name; clearing it takes the preset out of its folder. |
+| `14-drag-drop-target.png` | A preset being dragged over a folder. The whole group highlights, heading and cards together, so the drop target is never ambiguous. |
 
 ## Suggested picks for a portfolio page
 
@@ -39,4 +40,4 @@ python docs/make_screenshots.py . docs/screenshots .screenshot-tmp
   rollback after a failed verification.
 - **Theming** — `01-main-dark.png` / `02-main-light.png` as a before/after pair.
 - **Organisation** — `01-main-dark.png` / `12-folders-collapsed-dark.png` to show
-  folders expanding and collapsing.
+  folders expanding and collapsing, or `14-drag-drop-target.png` for the drag.
